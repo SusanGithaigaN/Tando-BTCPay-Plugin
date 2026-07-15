@@ -21,8 +21,11 @@ namespace BTCPayServer.Plugins.MassStoreGenerator;
 [Route("~/plugins/api/tando/")]
 [Authorize(Policy = Policies.CanModifyStoreSettingsUnscoped, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 [IgnoreAntiforgeryToken]
-public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService, 
-    TandoProductProvisioningService productProvisioningService) : Controller
+public class TandoOnboardingController(
+    StoreRepository storeRepository,
+    TandoSubscriptionService subscriptionService,
+    TandoProductProvisioningService productProvisioningService,
+    DarajaMobileNumberValidationService darajaValidation) : Controller
 {
     private const string PreferredRateSource = "bitcoinkenya";
     private const string DefaultCurrency = "KES";
@@ -99,6 +102,26 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
                 CartAppId = cartAppId
             });
         }
+
+        var phoneNumberVerified = false;
+        var darajaSettings = await darajaValidation.GetSettings();
+        if (darajaSettings.IsConfigured())
+        {
+            var idType = string.IsNullOrWhiteSpace(request.IdType) ? "01" : request.IdType.Trim();
+            if (idType is not ("01" or "02" or "05"))
+                return BadRequest(new { error = "invalid_id_type", detail = "Expected 01 (National ID), 02 (Military ID) or 05 (Passport)." });
+            if (string.IsNullOrWhiteSpace(request.IdNumber))
+                return BadRequest(new { error = "id_number_required", detail = "Mobile number validation is enabled; supply the ID number the phone is registered under." });
+
+            var validation = await darajaValidation.ValidateMobileNumber(normalizedPhone, idType, request.IdNumber.Trim());
+            if (!validation.Success)
+                return StatusCode(503, new { error = "phone_validation_unavailable", detail = validation.Detail });
+            if (!validation.Matches)
+                return BadRequest(new { error = "phone_validation_failed", detail = validation.Detail ?? "The phone number is not registered under the provided ID." });
+            phoneNumberVerified = true;
+        }
+
+
         var store = await storeRepository.GetDefaultStoreTemplate();
         store.StoreName = normalizedPhone;
         var blob = store.GetStoreBlob();
@@ -120,7 +143,8 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             PhoneNumber = normalizedPhone,
             AlreadyExisted = false,
             PosAppId = newPosAppId,
-            CartAppId = newCartAppId
+            CartAppId = newCartAppId,
+            PhoneNumberVerified = phoneNumberVerified
         });
     }
 

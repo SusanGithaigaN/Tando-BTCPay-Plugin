@@ -25,6 +25,7 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<TandoSubscriptionService>();
         services.AddSingleton<SubscriptionHostedService>();
         services.AddScoped<TandoProductProvisioningService>();
+        services.AddSingleton<DarajaMobileNumberValidationService>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {
             Name = "Tando",

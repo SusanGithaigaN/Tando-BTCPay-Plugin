@@ -78,3 +78,42 @@ The server comes up at <http://localhost:14142>. On your first visit, register a
 
 - The **Tando** item appears in the sidebar navigation once you have a store selected.
 - The plugin is listed under **Server Settings → Plugins**.
+
+## 5. Configure Safaricom Daraja credentials (Mobile Number Validation)
+
+The Tando signup endpoint can verify a merchant's phone number against Safaricom's KYC database using the [Mobile Number Validation API](https://developer.safaricom.co.ke/apis/MobileNumberValidation). The API checks whether the phone number is registered under a given ID number (National ID, Military ID, or Passport) and returns true/false. Note this is a commercial API: sandbox is free, but production requires onboarding via <apisupport@safaricom.co.ke>, a signed commercial agreement, and is billed per call (KES 4.50/call at the lowest volume tier, ex-VAT).
+
+### Get API keys
+
+1. Create an account on the [Safaricom Developer Portal](https://developer.safaricom.co.ke) (Daraja).
+2. Go to **Dashboard → My Apps → Create App** (a sandbox app).
+3. Open the app and copy its **Consumer Key** and **Consumer Secret**.
+4. Note a short code to use. In sandbox, use the test short code from the API's simulator page; in production this is your live pay bill / till short code.
+
+### Configure the plugin
+
+1. Log into BTCPay as a server admin.
+2. Open <http://localhost:14142/plugins/tando/daraja/settings>.
+3. Enter the Consumer Key, Consumer Secret, and short code; leave **Use sandbox environment** checked for development. Save.
+
+Credentials are stored server-wide in BTCPay's settings table. When they are not configured, signup falls back to format-only (regex) validation of the phone number.
+
+### How signup changes when configured
+
+`POST /plugins/api/tando/signup` then requires the merchant's ID details alongside the phone number:
+
+```json
+{
+  "phoneNumber": "0712345678",
+  "idType": "01",
+  "idNumber": "12345678"
+}
+```
+
+`idType` is `01` National ID (the default if omitted), `02` Military ID, or `05` Passport. Responses:
+
+- Number and ID match → store is created, response contains `"phoneNumberVerified": true`.
+- They don't match → `400` with `"error": "phone_validation_failed"`.
+- Daraja unreachable / misconfigured / unsubscribed → `503` with `"error": "phone_validation_unavailable"` (signup is refused rather than skipping verification).
+
+Test data for the sandbox is listed on the API's simulator section in the developer portal (log in to see it).
