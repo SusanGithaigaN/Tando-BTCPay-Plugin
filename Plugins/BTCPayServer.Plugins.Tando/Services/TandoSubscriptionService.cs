@@ -1,8 +1,10 @@
 ﻿using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Contracts;
 using System.Linq;
+using Microsoft.EntityFrameworkCore;
 using BTCPayServer.Data;
 using BTCPayServer.Data.Subscriptions;
+using BTCPayServer.Plugins.Tando.ViewModels;
 
 namespace BTCPayServer.Plugins.Tando.Services;
 
@@ -10,11 +12,19 @@ public record TandoPlan(string Id, string Name, decimal Price, string Currency, 
 
 public record TandoSubscriptionStatus(bool Active, bool Configured, string? PlanId, string? Phase);
 
+public record ExistingOffering(string Id, string Name, string StoreId, string StoreName);
+
 public class TandoSubscriptionService(ApplicationDbContextFactory dbContextFactory, ISettingsRepository settingsRepository)
 {
     public async Task<TandoSettings> GetSettings() => await settingsRepository.GetSettingAsync<TandoSettings>("Tando") ?? new TandoSettings();
 
     public Task SaveSettings(TandoSettings settings) => settingsRepository.UpdateSetting(settings, "Tando");
+
+    public async Task<ExistingOffering[]> GetAllOfferings()
+    {
+        await using var ctx = dbContextFactory.CreateContext();
+        return await ctx.Offerings.IncludeAll().Select(o => new ExistingOffering(o.Id, o.App.Name, o.App.StoreDataId, o.App.StoreData.StoreName)).ToArrayAsync();
+    }
 
     public async Task<TandoPlan[]?> GetAvailablePlans()
     {
