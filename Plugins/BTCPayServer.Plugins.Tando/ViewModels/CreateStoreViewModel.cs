@@ -27,3 +27,6 @@ namespace BTCPayServer.Plugins.MassStoreGenerator.ViewModels
         public string StoreId { get; set; }
     }
 }
+
+
+public enum TandoBusinessPage { Settings }
