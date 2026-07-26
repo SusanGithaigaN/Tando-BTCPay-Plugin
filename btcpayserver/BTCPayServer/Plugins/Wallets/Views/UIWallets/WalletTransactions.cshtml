@@ -1,24 +1,28 @@
 @using BTCPayServer.Client
-@using BTCPayServer.Components
-@using BTCPayServer.Components.WalletNav
-@using BTCPayServer.TagHelpers
-@using System
+@using BTCPayServer.Controllers
+@using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Html
+@inject IAuthorizationService AuthorizationService
+
 @model ListTransactionsViewModel
 
 @{
     var walletId = Context.GetRouteValue("walletId").ToString();
     var storeId = Context.GetRouteValue("storeId")?.ToString();
     var cryptoCode = Context.GetRouteValue("cryptoCode")?.ToString();
-    var labelFilter = Context.Request.Query["labelFilter"].ToString();
     var wallet = walletId != null ? WalletId.Parse(walletId) : new WalletId(storeId, cryptoCode);
     storeId = wallet.StoreId;
-    const int maxVisibleLabels = 20;
-    var sortedLabels = Model.Labels.OrderBy(l => l.Text, StringComparer.OrdinalIgnoreCase).ToList();
-    var popularLabels = Model.PopularLabels.OrderBy(l => l.Text, StringComparer.OrdinalIgnoreCase).ToList();
-    var initialLabels = popularLabels.Any() ? popularLabels : sortedLabels.Take(maxVisibleLabels).ToList();
+    var directionFilters = Model.Search.GetFilterArray("direction") ?? Array.Empty<string>();
+    var hasIncomingFilter = directionFilters.Any(value => value.Equals("in", StringComparison.OrdinalIgnoreCase));
+    var hasOutgoingFilter = directionFilters.Any(value => value.Equals("out", StringComparison.OrdinalIgnoreCase));
+    var hasIncomingOnlyFilter = hasIncomingFilter && !hasOutgoingFilter;
+    var hasOutgoingOnlyFilter = hasOutgoingFilter && !hasIncomingFilter;
     ViewData.SetLayoutModel(new LayoutModel($"{nameof(WalletsNavPages.Transactions)}-{Model.CryptoCode}", StringLocalizer["{0} Transactions", Model.CryptoCode])
         .SetCategory(WellKnownCategories.ForWallet(Model.CryptoCode)));
+
+    var walletLabelsLink = @Url.Action(nameof(UIWalletsController.WalletLabels), new { walletId });
+    if (await AuthorizationService.AuthorizeAsync(User, WalletPolicies.CanManageWalletSettings) is not { Succeeded: true })
+        walletLabelsLink = null;
 }
 
 @section PageHeadContent {
@@ -35,56 +39,52 @@
             }
         }
 
-        #LabelDropdownMenu {
-            max-height: 480px;
-            overflow-y: auto;
-            scrollbar-width: thin;
+        .search-string-input__text {
+            flex-shrink: 0;
+            min-width: 200px;
+            max-width: 320px;
         }
-        #LabelDropdownMenu #LabelSearchContainer .input-group:focus-within {
-            border-color: var(--btcpay-form-border-focus) !important;
-        }
-        #LabelDropdownMenu #LabelSearchContainer {
-            position: sticky;
-            top: 0;
-            z-index: 1;
-            background: var(--btcpay-dropdown-bg);
-            border-bottom: var(--bs-border-width, 1px) solid var(--bs-border-color, rgba(0,0,0,.175));
-        }
-        #LabelDropdownMenu .label-filter-divider {
-            display: none;
-        }
-        #LabelDropdownMenu .label-filter-clear {
-            position: sticky;
-            bottom: 0;
-            background: var(--btcpay-dropdown-bg);
-            border-top: var(--bs-border-width, 1px) solid var(--bs-border-color, rgba(0,0,0,.175));
-        }
-        #LabelDropdownMenu .label-filter-clear .dropdown-item {
-            padding-top: 0.75rem;
-            padding-bottom: 0.75rem;
-        }
-        #LabelDropdownMenu .label-filter-item .label-filter-link {
-            display: flex;
+
+        #Dropdowns {
             align-items: center;
-            justify-content: space-between;
+        }
+
+        #Export {
+            align-items: center;
+        }
+
+        #Export > .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
             gap: 0.5rem;
-        }
-        #LabelDropdownMenu .label-filter-item .label-filter-count {
-            margin-left: auto;
-            text-align: right;
-            opacity: 0.75;
+            text-align: center;
+            padding-left: var(--bs-btn-padding-x);
+            padding-right: var(--bs-btn-padding-x);
         }
 
-        /* pull actions area, so that it is besides the search form */
-        @@media (min-width: 1200px) {
-            #Filter + #Dropdowns {
-                margin-top: -4rem;
-                float: right;
-            }
+        #Export > .btn .icon {
+            margin-left: 0;
+        }
 
-            #Filter + #Dropdowns #Actions {
-                order: 1;
+        #view-report {
+            min-width: 7rem;
+        }
+
+        #ExportDropdownToggle::after {
+            margin-left: 0.5rem;
+        }
+
+        @@media (max-width: 568px) {
+            .search-string-input__text {
+                width: 100%;
             }
+        }
+
+        .dropdown > .btn {
+            min-width: 7rem;
+            padding-left: 1rem;
+            text-align: left;
         }
 
         #LoadingIndicator {
@@ -96,7 +96,6 @@
 @section PageFootContent {
     @*Script must be async to ensure proper page loading*@
     <script src="~/modal/btcpay.js" asp-append-version="true" async></script>
-    @* Custom Range Modal *@
     <script>
         const $actions = document.getElementById('ListActions');
         const $transactions = document.getElementById('WalletTransactions');
@@ -108,69 +107,21 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
 
-        const $labelSearch = document.getElementById('LabelSearch');
-        if ($labelSearch) {
-            let allLabels = @Safe.Json(sortedLabels.Select(label => new { text = label.Text, color = label.Color, textColor = label.TextColor, usageCount = label.UsageCount }));
-            const initialLabels = @Safe.Json(initialLabels.Select(label => new { text = label.Text, color = label.Color, textColor = label.TextColor, usageCount = label.UsageCount }));
-            const activeLabel = @Safe.Json(labelFilter);
-            const $menu = document.getElementById('LabelDropdownMenu');
-
-            function renderLabelItems(labels) {
-                $menu.querySelectorAll('.label-filter-item').forEach(el => el.remove());
-                const divider = $menu.querySelector('.label-filter-divider');
-                const fragment = document.createDocumentFragment();
-                const $template = document.getElementById('label-filter-item-template');
-
-                labels.forEach(label => {
-                    const labelFilterItem = $template.content.cloneNode(true);
-                    const a = labelFilterItem.querySelector('a');
-                    const labelText = a.querySelector('.label-filter-text');
-                    const labelCount = a.querySelector('.label-filter-count');
-                    a.href = a.getAttribute('href').replace('LABEL_PLACEHOLDER', encodeURIComponent(label.text));
-                    if (label.text === activeLabel) a.classList.add('active');
-                    a.style.setProperty('--btcpay-dropdown-link-active-bg', label.color);
-                    a.style.setProperty('--btcpay-dropdown-link-active-color', label.textColor);
-                    labelText.textContent = label.text;
-                    if (label.usageCount > 0) {
-                        labelCount.classList.remove('d-none');
-                        labelCount.textContent = label.usageCount;
-                    } else {
-                        labelCount.classList.add('d-none');
-                        labelCount.textContent = '';
-                    }
-                    fragment.appendChild(labelFilterItem);
-                });
-
-                if (divider) {
-                    $menu.insertBefore(fragment, divider);
-                } else {
-                    $menu.appendChild(fragment);
-                }
-            }
-
-            // Keep the dropdown open while typing in the search box
-            $labelSearch.addEventListener('click', e => e.stopPropagation());
-            $labelSearch.addEventListener('input', () => {
-                const query = $labelSearch.value.toLowerCase().trim();
-                renderLabelItems(query ? allLabels.filter(label => label.text.toLowerCase().includes(query)) : initialLabels);
-            });
-        }
-
         if ($actions && $actions.offsetTop - window.innerHeight > 0) {
             document.getElementById('GoToTop').classList.remove('d-none');
         }
 
         const count = @Safe.Json(Model.Count);
         const skipInitial = @Safe.Json(Model.Skip);
-		const loadMoreUrl = @Safe.Json(Url.Action("WalletTransactions", new {walletId, labelFilter, skip = Model.Skip, count = Model.Count, loadTransactions = true}));
-		// The next time we load transactions, skip will become 0
+        const loadMoreUrl = @Safe.Json(Url.Action("WalletTransactions", new {walletId, searchTerm = Model.SearchTerm, searchText = Model.SearchText, skip = Model.Skip, count = Model.Count, loadTransactions = true}));
+        // The next time we load transactions, skip will become 0
         let skip = @Safe.Json(Model.Skip) - count;
 
         async function loadMoreTransactions() {
             $indicator.classList.remove('d-none');
 
             const skipNext = skip + count;
-            const url = loadMoreUrl.replace(`skip=${skipInitial}`, `skip=${skipNext}`)
+            const url = new URL(loadMoreUrl.replace(`skip=${skipInitial}`, `skip=${skipNext}`), window.location.origin);
             const response = await fetch(url, {
                 headers: {
                     'Accept': 'text/html',
@@ -193,17 +144,23 @@
                     // replace table and dropdowns if initial response was empty
                     if (responseEmpty) {
                         $dropdowns.remove();
-                        $transactions.innerHTML = '<div class="text-secondary" data-loaded="true">There are no transactions yet.</div>';
+                        const emptyMessage = document.createElement('div');
+                        emptyMessage.classList.add('text-secondary');
+                        emptyMessage.dataset.loaded = 'true';
+                        emptyMessage.textContent = @Safe.Json(StringLocalizer["There are no transactions yet."].Value);
+                        $transactions.replaceChildren(emptyMessage);
                     }
                 }
             }
 
             $indicator.classList.add('d-none');
-            formatDateTimes(document.querySelector('#WalletTransactions .switch-time-format').dataset.mode);
+            var switchTime = document.querySelector('#WalletTransactions .switch-time-format');
+            if (switchTime)
+                formatDateTimes(switchTime.dataset.mode);
             initLabelManagers();
         }
 
-		const observer = new IntersectionObserver(async entries => {
+        const observer = new IntersectionObserver(async entries => {
             const { isIntersecting } = entries[0];
             if (isIntersecting) {
                 await loadMoreTransactions();
@@ -212,93 +169,85 @@
 
         // the actions div marks the end of the list table
         observer.observe($actions);
+
+        delegate('click', '.wallet-labels__import-button', event => {
+            event.target.closest('form').querySelector('.wallet-labels__import-file').click()
+        })
+        delegate('change', '.wallet-labels__import-file', event => {
+            if (event.target.files.length > 0)
+                event.target.closest('form').submit()
+        })
     </script>
 }
 
 <div class="sticky-header">
     <vc:wallet-nav wallet-id="wallet"/>
+    <div class="d-flex flex-wrap align-items-center gap-3" id="Dropdowns">
+        <div class="dropdown d-flex flex-wrap gap-3" id="Export" permission="@WalletPolicies.CanViewWallet">
+            <a
+                id="view-report"
+                permission="@Policies.CanViewReports"
+                asp-area=""
+                asp-controller="UIReports"
+                asp-action="StoreReports"
+                asp-route-storeId="@storeId"
+                asp-route-viewName="Wallets"
+                class="btn btn-secondary">
+                <vc:icon symbol="nav-reporting" />
+                <span text-translate="true">Reporting</span>
+            </a>
+            <form asp-action="Export" asp-route-walletId="@walletId" target="_blank" method="get">
+                <button class="btn btn-secondary dropdown-toggle" type="button" id="ExportDropdownToggle" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false" text-translate="true">
+                    Export
+                </button>
+                <div class="dropdown-menu" aria-labelledby="ExportDropdownToggle">
+                    <input type="hidden" name="searchTerm" value="@Model.SearchTerm" />
+                    <input type="hidden" name="searchText" value="@Model.SearchText" />
+                    <button type="submit" name="format" value="csv" class="dropdown-item export-link" id="ExportCSV" text-translate="true">CSV</button>
+                    <button type="submit" name="format" value="json" class="dropdown-item export-link" id="ExportJSON" text-translate="true">JSON</button>
+                    <button type="submit" name="format" value="bip329" class="dropdown-item export-link" id="ExportBIP329" text-translate="true">Wallet Labels (BIP-329)</button>
+                </div>
+            </form>
+        </div>
+        <form asp-action="ImportWalletLabels" asp-route-walletId="@walletId" method="post" enctype="multipart/form-data"
+              class="wallet-labels__import" permission="@WalletPolicies.CanManageWalletTransactions">
+            <input type="file" name="file" class="wallet-labels__import-file d-none" accept=".jsonl,.json,.txt" aria-hidden="true" tabindex="-1" />
+            <button type="button" class="btn btn-secondary wallet-labels__import-button" text-translate="true">Import BIP-329 labels</button>
+        </form>
+    </div>
 </div>
 <partial name="_StatusMessage" />
 
-<div class="d-flex flex-wrap align-items-center justify-content-between gap-3" id="Dropdowns">
-    @if (Model.Labels.Any())
-    {
-        <div class="btn-group" id="Filter">
-            <button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
-                @if (string.IsNullOrEmpty(labelFilter))
-                {
-                    <span class="text-secondary" text-translate="true">Filter by label</span>
-                }
-                else
-                {
-                    <span class="text-secondary" text-translate="true">Label:</span>
-                    <span>@labelFilter</span>
-                }
-            </button>
-            @{
-                var visibleLabels = initialLabels;
+<form id="WalletTransactionsSearch" class="d-flex flex-wrap flex-sm-nowrap align-items-center gap-3 mb-4 col-xxl-8" asp-action="WalletTransactions" asp-route-walletId="@walletId" method="get">
+    <input id="Count" name="Count" type="hidden" value="@Model.Count" />
+    <vc:search-string-input search-string="Model.Search" placeholder="@StringLocalizer["Search transactions..."]"></vc:search-string-input>
+
+    <div class="dropdown wallet-transactions__direction" id="DirectionDropdown">
+        <button id="wallet-transactions__direction-toggle" class="btn btn-secondary dropdown-toggle dropdown-toggle-custom-caret wallet-transactions__direction-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            @if (hasIncomingOnlyFilter)
+            {
+                <span text-translate="true">Incoming</span>
             }
-            <ul class="dropdown-menu mt-1 py-0" id="LabelDropdownMenu" style="min-width:280px">
-                <li class="px-2 pt-2 pb-2@(sortedLabels.Count() > maxVisibleLabels ? "" : " d-none")" id="LabelSearchContainer">
-                    <div class="input-group border rounded">
-                        <span class="input-group-text border-0 text-muted px-2" style="background:transparent">
-                            <vc:icon symbol="actions-search" />
-                        </span>
-                        <input type="text" class="form-control border-0 shadow-none ps-0 bg-transparent" id="LabelSearch"
-                            placeholder="@StringLocalizer["Search labels…"]" autocomplete="off" aria-label="@StringLocalizer["Search labels…"]"/>
-                    </div>
-                </li>
-
-                @foreach (var label in visibleLabels)
-                {
-                    <li class="label-filter-item">
-                        <a asp-route-labelFilter="@label.Text" class="dropdown-item transaction-label-text label-filter-link@(labelFilter == label.Text ? " active" : string.Empty)" style="--btcpay-dropdown-link-active-bg:@label.Color;--btcpay-dropdown-link-active-color:@label.TextColor;">
-                            <span class="label-filter-text">@label.Text</span>
-                            <small class="label-filter-count@(label.UsageCount > 0 ? string.Empty : " d-none")">@label.UsageCount</small>
-                        </a>
-                    </li>
-                }
-                @if (!string.IsNullOrEmpty(labelFilter))
-                {
-                    <li class="label-filter-divider"><hr class="dropdown-divider"></li>
-                    <li class="label-filter-clear"><a class="dropdown-item" asp-route-labelFilter="" text-translate="true">Clear filter</a></li>
-                }
-            </ul>
-            <template id="label-filter-item-template">
-                <li class="label-filter-item">
-                    <a asp-route-labelFilter="LABEL_PLACEHOLDER" class="dropdown-item transaction-label-text label-filter-link">
-                        <span class="label-filter-text"></span>
-                        <small class="label-filter-count d-none"></small>
-                    </a>
-                </li>
-            </template>
-        </div>
-    }
-
-    <div class="dropdown d-inline-flex align-items-center gap-3 ms-auto" id="Export" permission="@WalletPolicies.CanViewWallet">
-        <a
-            id="view-report"
-            permission="@Policies.CanViewReports"
-            asp-area=""
-            asp-controller="UIReports"
-            asp-action="StoreReports"
-            asp-route-storeId="@storeId"
-            asp-route-viewName="Wallets"
-            class="btn btn-secondary">
-            <vc:icon symbol="nav-reporting" />
-            <span text-translate="true">Reporting</span>
-        </a>
-        <button class="btn btn-secondary dropdown-toggle" type="button" id="ExportDropdownToggle" data-bs-toggle="dropdown" aria-haspopup="true" aria-expanded="false" text-translate="true">
-            Export
+            else if (hasOutgoingOnlyFilter)
+            {
+                <span text-translate="true">Outgoing</span>
+            }
+            else
+            {
+                <span text-translate="true">All Directions</span>
+            }
         </button>
-        <div class="dropdown-menu" aria-labelledby="ExportDropdownToggle">
-            <a asp-action="Export" asp-route-walletId="@walletId" asp-route-format="csv" asp-route-labelFilter="@labelFilter" class="dropdown-item export-link" target="_blank" id="ExportCSV" text-translate="true">CSV</a>
-            <a asp-action="Export" asp-route-walletId="@walletId" asp-route-format="json" asp-route-labelFilter="@labelFilter" class="dropdown-item export-link" target="_blank" id="ExportJSON" text-translate="true">JSON</a>
-            <a asp-action="Export" asp-route-walletId="@walletId" asp-route-format="bip329" asp-route-labelFilter="@labelFilter" class="dropdown-item export-link" target="_blank" id="ExportBIP329" text-translate="true">Wallet Labels (BIP-329)</a>
+        <div class="dropdown-menu wallet-transactions__direction-menu" aria-labelledby="wallet-transactions__direction-toggle">
+            <button type="submit" name="FilterCommand" value="unset:direction" class="dropdown-item wallet-transactions__direction-option @((!hasIncomingOnlyFilter && !hasOutgoingOnlyFilter) ? "custom-active" : string.Empty)" text-translate="true">All Directions</button>
+            <button type="submit" name="FilterCommand" value="set:direction=in" class="dropdown-item wallet-transactions__direction-option @(hasIncomingOnlyFilter ? "custom-active" : string.Empty)" text-translate="true">Incoming</button>
+            <button type="submit" name="FilterCommand" value="set:direction=out" class="dropdown-item wallet-transactions__direction-option @(hasOutgoingOnlyFilter ? "custom-active" : string.Empty)" text-translate="true">Outgoing</button>
         </div>
     </div>
-</div>
-<div style="clear:both"></div>
+    <vc:label-selector labels="Model.Labels" search="Model.Search" allow-no-label-filter="true" manage-label-link="@walletLabelsLink"></vc:label-selector>
+    <vc:date-range-selector search="Model.Search" custom-range-title='@StringLocalizer["Filter transactions by Custom Range"].Value'></vc:date-range-selector>
+
+    <vc:clear-all-filters search="Model.Search"></vc:clear-all-filters>
+</form>
 
 @if (Model.PendingTransactions?.Any() == true)
 {
@@ -325,7 +274,7 @@
                 var ptblob = @pendingTransaction.GetBlob();
                 var isMultisigPending = (ptblob?.SignaturesNeeded ?? 0) > 0 && (ptblob?.SignaturesTotal ?? 0) > 1;
                 <tr>
-                    <td>@pendingTransaction.TransactionId</td>
+                    <td>@(pendingTransaction.TransactionId?.ToString() ?? "—")</td>
                     <td>@pendingTransaction.State</td>
                     @if (showMultisigColumns)
                     {
@@ -376,14 +325,7 @@
             <th class="only-for-js mass-action-select-col" permission="@WalletPolicies.CanCreateWalletTransactions">
                 <input type="checkbox" class="form-check-input mass-action-select-all" />
             </th>
-            <th class="date-col">
-                <div class="d-flex align-items-center gap-3">
-                        <span text-translate="true">Date</span>
-                        <button type="button" class="btn btn-link p-0 switch-time-format only-for-js" title="@StringLocalizer["Switch date format"]">
-                            <vc:icon symbol="time" />
-                        </button>
-                </div>
-            </th>
+            <vc:date-column></vc:date-column>
             <th text-translate="true" style="min-width:125px">Label</th>
             <th text-translate="true">Transaction</th>
             <th text-translate="true" class="amount-col">Amount</th>

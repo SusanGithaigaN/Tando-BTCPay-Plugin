@@ -1,5 +1,110 @@
 # Changelog
 
+## 2.4.1
+
+### New features
+
+* Plugins: Improve the plugin directory page (#7381) @thgO-O
+* Wallet: Add BIP-329 label import (#7457) @atharrva01
+* Invoices: Add editable invoice comments, including Greenfield API and report export support (#7444) @dstrukt
+* Email Rules: Add a new trigger for invoice refunds (#7374) @Abhijay007
+* Greenfield: Support `payoutMethods` array when refunding invoices (#7413) @atharrva01
+* Greenfield: Support `includePaymentMethods` on get invoice (#7426) @atharrva01
+* Allow time zone configuration in date range selectors (#7424) @NicolasDorier
+* Add more relevant default date range filters such as `This month`, `This week`, `This quarter` (#7424) @NicolasDorier
+* Adapt the UI for Right-To-Left (RTL) languages such as Arabic, Hebrew, and Persian (#7428) @teamssUTXO @AdilElFarissi
+
+### Fixes
+
+* Fix Boltcard payments that stopped working @Kukks
+* Fix LNDHub not being enabled by default (#7418) @NicolasDorier
+* Fix server admins unable to view a user's store @NicolasDorier
+* Fix NBXplorer error rendering (#7421) @MichaelRihani
+* Fix plugin command processing crash on Windows (#7422) @Kukks
+* Fix DASH default rate calculation and use Kraken for DASH rates (#7446) @NicolasDorier @ktechmidas
+* Fix untranslated Blazor UI strings (#7423) @Wiredancer
+* Pull Payments: Return 404 instead of 500 when opening payouts for a missing Pull Payment (#7429) @atharrva01
+* Greenfield: Unnest payout-related routes by making `storeId` optional. (#7433) @atharrva01
+* Wallet: Allow recommended fees below 1 sat/vbyte on the send screen (#7437) @NicolasDorier
+* Wallet: Refresh label filter dropdown after adding labels inline (#7436) @TowyTowy
+* Fix Custom Range formatting in the date range selector (#7439) @NicolasDorier
+* Fix Core Lightning compatibility issues (#7449) @NicolasDorier
+* Fix Boltcards payments @NicolasDorier
+* Fix  Core lightning fundchannel feerate by passing NBitcoin FeePerK value directly as perkb. (#7449) @thgO-O
+* Fix c-lightning MaxFeePercent being sent to xpay in satoshi instead of millisatoshi (#7449) @TowyTowy
+* Fix the `Mark as seen` button in the notification list (#7424) @NicolasDorier
+* Fix incorrect date range filtering across DST boundaries (#7424) @NicolasDorier
+
+### Improvements
+
+* Use the browser's preferred hour format in the date time picker (#7424) @NicolasDorier
+* Add a Manage Labels link to Bitcoin Wallet labels (#7435) @NicolasDorier
+* Unify reports’ page time range selection (#7438) @NicolasDorier
+* Add tooltips to global navigation icons (#7443) @Pavlenex
+* Standardize topbar dropdown menus (#7425) @thgO-O
+* Improve topbar visual separation (#7445) @Pavlenex
+* Keep store settings navigation expanded and highlighted on subpages (#7452) @dstrukt
+* Remove misleading error logs on the first installation @NicolasDorier
+* Make global search more forgiving (#7461) @NicolasDorier
+* Update default global search bar suggestions (#7466) @NicolasDorier
+
+## 2.4.0
+
+See the [blog post announcement](https://blog.btcpayserver.org/btcpay-server-2-4-0/).
+
+### Breaking changes
+
+* LNBank and Lightning Charge backends are no longer supported.
+* If you use Boltcards Extension or Shopify v2 plugins, you will need to upgrade to the latest version of the plugin.
+
+### New features
+
+* Add multisig wallet setup (#7218) @thgO-O
+* Add a global search bar to improve navigation (#7183) @NicolasDorier
+* Add loginless and passwordless passkey authentication (#7172) @bitcoinbrisbane @NicolasDorier
+* Add more granular permissions for wallet management (#7357) @thgO-O
+* Subscription: Allow credit refunds via Pull Payments (#7284) @TChukwuleta
+* Subscription: Allow subscribers and customers to modify their notification email in the portal (#7300) @TChukwuleta
+* Point of Sale: Add configuration for tax on tips (#7298) @TChukwuleta
+* Point of Sale: Allow merchants to configure tax inclusion or exclusion (#7290) @TChukwuleta
+* Wallet: Add transaction search and date filters (#7133) @Sup3rlativ3
+* Add Bitcoin.co.ke rate provider (#7370) @sixside
+* Allow setting the maximum number of stores per user (#7320) @Abhijay007
+* Allow server admins to specify whether invited users subscribe to monetization (#7318) @TChukwuleta
+* Add separate `CanSendStoreEmail` permission for the store email API (#7345) @Abhijay007
+* Can bulk archive pull payments (#7400) @TChukwuleta
+
+### Fixes
+
+* Fix: Archiving invoices with a custom range filter returned error 403 (#7383 #7386) @NicolasDorier
+* Fix invalid Yadio rate handling (#7377) @BuffaloDyl
+* Fix iOS touch lockup on Keypad Point of Sale item buttons (#7379) @Wiredancer
+* Fix a corrupted table in the "Enter your xpub" screen @NicolasDorier
+* Fix searched text corrupting the search filter (#7338) @NicolasDorier
+* Fix BTCPay Server hanging on shutdown when Bitcoin support is disabled @NicolasDorier
+* Prevent 2FA code submission when the authenticator is not configured @NicolasDorier
+* Invoice Date Filter - Date Selector Widget closes the month list when clicked (#7384 #7388) @senutpal
+* Invoice Date Filter - Date Selector Widget had month dropdown with white text on a white background in Dark Mode (#7385) @senutpal
+* Refunds and pull payments were unable to make payments from LND 0.21.0 (https://github.com/btcpayserver/BTCPayServer.Lightning/pull/178) @warioishere
+* Uninstall button is missing for language packs (#7390 #7392) @teamssUTXO
+* Lightning invoice silently dropped when the node doesn't return amount on reconnection (#7402) @atharrva01
+* The Server Policies page would timeout when the server had too many apps (#7406) @NicolasDorier
+* Fix support for Core lightning 26.06 (#7412) @NicolasDorier
+
+### Improvements
+
+* Show missing permissions on the 403 page (#7387) @NicolasDorier
+* Adds inline QR and copy actions to the `Store Id` field on the Store Settings page. (#7396) @BuffaloDyl
+* Unnest UI routes for Pull Requests, Pull Payments, Invoices, and Apps (#7368) @NicolasDorier
+* Improve language pack selection (#7347) @teamssUTXO
+* Display Bylls as Bull Bitcoin in rate sources (#7364) @BullishNode
+
+### Miscellaneous
+
+* Remove deprecated Shopify Scripts integration (#6608) @NicolasDorier
+* Deprecate LCAD (#7363) @BullishNode
+* Remove support of some lightning backends: Lightning Charge, LNDHub, LNBank.
+
 ## 2.3.9
 
 ### Fixes
@@ -3164,7 +3269,7 @@ Those are low risk injection vulnerabilities.
   * Arabic (Ar) @kemoantemo
   * Bosnian (Bosnia and Herzegovina) (bs_BA) @Ruxiol
   * Danish (Denmark) (da_DK) @Berlelund
-  * German (Germany) (de_DE)[@andhans](https://twitter.com/andhans_jail)
+  * German (Germany) (de_DE)[@andhans](https://x.com/andhans_jail)
   * Greek (Greece) (el_GR) @kaloudis
   * Spanish (Spain) (es_ES) @RzeroD
   * Hindi(hi) @blockbitmedia

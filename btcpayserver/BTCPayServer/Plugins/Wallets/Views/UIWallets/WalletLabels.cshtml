@@ -4,6 +4,10 @@
     var cryptoCode = Model.WalletId.CryptoCode;
     ViewData.SetLayoutModel(new LayoutModel($"{nameof(WalletsNavPages.Settings)}-{cryptoCode}", StringLocalizer["{0} Wallet Labels", Model.WalletId.CryptoCode])
         .SetCategory(WellKnownCategories.ForWallet(cryptoCode)));
+    ViewData.SetBreadcrumbs([
+        new(StringLocalizer["Transactions"], Action: nameof(BTCPayServer.Controllers.UIWalletsController.WalletTransactions), Controller: nameof(BTCPayServer.Controllers.UIWalletsController), RouteValues: new { walletId }),
+        new(StringLocalizer["Labels"], Active: true)
+    ]);
 }
 
 @section PageFootContent {
@@ -11,7 +15,7 @@
         delegate('click', '.btn-delete', event => {
             event.preventDefault()
         })
-        
+
         delegate('click', '.btn-edit', event => {
             const button = event.target.closest('.btn-edit')
             const label = button.dataset.label
@@ -20,29 +24,27 @@
             const form = modal.querySelector('form')
             const oldLabelInput = modal.querySelector('#OldLabel')
             const walletId = '@walletId'
-            
+
             input.value = label
             oldLabelInput.value = label
             form.action = `/wallets/${walletId}/labels/${encodeURIComponent(label)}/edit`
-            
+
             new bootstrap.Modal(modal).show()
         })
     </script>
 }
 
 <div class="sticky-header">
-    <nav aria-label="breadcrumb">
-        <ol class="breadcrumb">
-            <li class="breadcrumb-item">
-                <a asp-action="WalletTransactions" asp-controller="UIWallets" asp-route-walletId="@walletId" text-translate="true">Transactions</a>
-            </li>
-            <li class="breadcrumb-item active" aria-current="page">Labels</li>
-        </ol>
-        <h2>@ViewData["Title"]</h2>
-    </nav>
+    <vc:title-header />
 </div>
 
 <partial name="_StatusMessage" />
+
+<form method="post" enctype="multipart/form-data" asp-action="ImportWalletLabels" asp-route-walletId="@Model.WalletId"
+      class="wallet-labels__import d-flex flex-wrap align-items-center gap-2 mb-4" permission="@WalletPolicies.CanManageWalletTransactions">
+    <input type="file" name="file" class="form-control wallet-labels__import-file w-auto" accept=".jsonl,.json,.txt" required />
+    <button type="submit" class="btn btn-secondary wallet-labels__import-button" text-translate="true">Import BIP-329 labels</button>
+</form>
 
 @if (Model.Labels.Any())
 {
@@ -85,7 +87,7 @@
     <partial name="_Confirm"
              model="@(new ConfirmModel(StringLocalizer["Delete label"],
     StringLocalizer["This label will be deleted from this wallet and its associated transactions."], StringLocalizer["Delete"]))" />
-    
+
     <div class="modal fade" id="EditLabelModal" tabindex="-1" aria-labelledby="EditLabelModalLabel" aria-hidden="true">
         <div class="modal-dialog">
             <form method="post" asp-action="EditWalletLabel" asp-route-walletId="@Model.WalletId">

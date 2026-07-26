@@ -78,13 +78,13 @@ public class WebhooksPlugin : BaseBTCPayServerPlugin
         services.AddWebhookTriggerProvider<PendingTransactionTriggerProvider>();
         var pendingTransactionsPlaceholders = new List<EmailTriggerViewModel.PlaceHolder>()
         {
-            new("{PendingTransaction.Id}", "The id of the pending transaction"),
-            new("{PendingTransaction.TrimmedId}", "The trimmed id of the pending transaction"),
+            new("{PendingTransaction.Id}", "The id of the pending transaction (if available)"),
+            new("{PendingTransaction.TrimmedId}", "The trimmed id of the pending transaction (if available)"),
             new("{PendingTransaction.StoreId}", "The store id of the pending transaction"),
             new("{PendingTransaction.SignaturesCollected}", "The number of signatures collected"),
             new("{PendingTransaction.SignaturesNeeded}", "The number of signatures needed"),
             new("{PendingTransaction.SignaturesTotal}", "The total number of signatures"),
-            new("{PendingTransaction.Link}", "The link to the wallet transaction list")
+            new("{PendingTransaction.Link}", "The link to the pending transaction or wallet transaction list")
         };
 
         var pendingTransactionTriggers = new List<EmailTriggerViewModel>()
@@ -278,6 +278,7 @@ public class WebhooksPlugin : BaseBTCPayServerPlugin
     {
         services.AddWebhookTriggerProvider<InvoiceTriggerProvider>();
         var invoicePlaceholders = InvoiceTriggerProvider.GetInvoicePlaceholders();
+        var refundPlaceholders = InvoiceTriggerProvider.GetRefundPlaceholders();
         var emailTriggers = new List<EmailTriggerViewModel>()
         {
             new()
@@ -388,6 +389,18 @@ public class WebhooksPlugin : BaseBTCPayServerPlugin
                     CanIncludeCustomerEmail = true
                 },
                 PlaceHolders = invoicePlaceholders
+            },
+            new()
+            {
+                Trigger = WebhookEventType.InvoiceRefund,
+                Description = "Invoice - Refund Created",
+                DefaultEmail = new()
+                {
+                    Subject = "Refund available for Invoice {Invoice.Id}",
+                    Body = "A refund has been created for Invoice {Invoice.Id} (Order Id: {Invoice.OrderId}).\nClaim your refund here: {PullPayment.Link}",
+                    CanIncludeCustomerEmail = true
+                },
+                PlaceHolders = refundPlaceholders
             }
         };
         services.AddWebhookTriggerViewModels(emailTriggers);

@@ -4,7 +4,6 @@ using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
-using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -13,19 +12,23 @@ using Microsoft.Extensions.Localization;
 namespace BTCPayServer.Plugins.MassStoreGenerator;
 
 [Authorize(Policy = Policies.CanModifyServerSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
-public class UITandoSettingsController(TandoSubscriptionService subscriptionService, StoreRepository storeRepository, IStringLocalizer stringLocalizer) : Controller
+[Route("server/tando")]
+public class UITandoSettingsController(TandoSubscriptionService subscriptionService, IStringLocalizer stringLocalizer) : Controller
 {
     private IStringLocalizer StringLocalizer { get; } = stringLocalizer;
 
-    [HttpGet("~/server/services/tando")]
+    [HttpGet]
     public async Task<IActionResult> Settings()
     {
+        ViewData["ActivePage"] = "Tando";
         return View(await BuildViewModel(null));
     }
 
     [HttpPost]
     public async Task<IActionResult> Settings(TandoSettingsViewModel model)
     {
+        ViewData["ActivePage"] = "Tando";
+
         if (string.IsNullOrEmpty(model.SubscriptionOfferingId))
         {
             ModelState.AddModelError(nameof(model.SubscriptionOfferingId), StringLocalizer["Select a subscription offering"]);
@@ -36,7 +39,6 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
         return RedirectToAction(nameof(Settings));
     }
 
-
     private async Task<TandoSettingsViewModel> BuildViewModel(string? selectedOfferingId)
     {
         var settings = await subscriptionService.GetSettings();
@@ -44,14 +46,12 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
         string? createOfferingUrl = null;
         var currentStoreId = HttpContext.GetUserPrefsCookie().CurrentStoreId;
         if (!string.IsNullOrEmpty(currentStoreId))
-            createOfferingUrl = Url.Action("CreateApp", "UIApps", new { storeId = currentStoreId, appType = "Subscriptions" });
+            createOfferingUrl = Url.Action("CreateOffering", "UIOffering", new { area = "Subscriptions", storeId = currentStoreId });
 
         return new TandoSettingsViewModel
         {
             SubscriptionOfferingId = selectedOfferingId ?? settings.SubscriptionOfferingId,
-            Offerings = offerings
-                .Select(o => new SelectListItem($"{o.Name} ({o.StoreName})", o.Id))
-                .ToList(),
+            Offerings = offerings.Select(o => new SelectListItem($"{o.Name} ({o.StoreName})", o.Id)).ToList(),
             CreateOfferingUrl = createOfferingUrl
         };
     }

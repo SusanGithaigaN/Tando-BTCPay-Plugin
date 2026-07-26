@@ -18,10 +18,7 @@
         class="globalNav-btn d-lg-none"
         type="button"
         aria-label="@StringLocalizer["Search"]"
-        title="@StringLocalizer["Search"]"
-        data-bs-trigger="hover"
-        data-bs-placement="bottom"
-        data-global-nav-tooltip="1">
+        data-global-nav-tooltip>
     <vc:icon symbol="actions-search" />
 </button>
 <div id="globalSearchShell" class="globalSearch-shell">
@@ -82,8 +79,13 @@
         "Recent": @Safe.Json(StringLocalizer["Recent"].Value),
         "Clear history": @Safe.Json(StringLocalizer["Clear history"].Value),
         "Suggested": @Safe.Json(StringLocalizer["Suggested"].Value),
+        "Find by transaction id (prefix supported)": @Safe.Json(StringLocalizer["Find by transaction id (prefix supported)"].Value),
+        "Find by invoice id": @Safe.Json(StringLocalizer["Find by invoice id"].Value),
+        "Find by address": @Safe.Json(StringLocalizer["Find by address"].Value),
+        "Jump to pages quickly": @Safe.Json(StringLocalizer["Jump to pages quickly"].Value),
+        "Get a deposit address": @Safe.Json(StringLocalizer["Get a deposit address"].Value),
     };
 </script>
 <link href="~/plugins/GlobalSearch/global-search.css" rel="stylesheet" asp-append-version="true" />
+<script src="~/vendor/fuse.js/fuse.min.js" asp-append-version="true"></script>
 <script src="~/plugins/GlobalSearch/global-search.js" asp-append-version="true"></script>
-

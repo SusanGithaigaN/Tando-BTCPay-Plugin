@@ -27,7 +27,7 @@
 }
 
 <div class="sticky-header">
-    <h2>@ViewData["Title"]</h2>
+    <vc:title-header />
     <div>
         <a class="btn btn-secondary" asp-action="ConfigureOffering" asp-route-storeId="@storeId" asp-route-offeringId="@offeringId" permission="@SubscriptionsPolicies.CanModifyOfferings" text-translate="true">Configure</a>
     </div>
@@ -263,6 +263,15 @@
                                             data-action="credit">
                                             Credit
                                         </a>
+										<a
+											href="#"
+											text-translate="true"
+											class="charge-subscriber-link dropdown-item lh-base"
+											data-bs-toggle="modal"
+											data-bs-target="#updateCreditModal"
+											data-action="refund">
+											Refund
+										</a>
                                         <a
                                             href="#"
                                             text-translate="true"

@@ -51,6 +51,12 @@ namespace BTCPayServer.Services.Invoices
             set => this.SetAdditionalData("orderId", value);
         }
         [JsonIgnore]
+        public string Comment
+        {
+            get => this.GetAdditionalData<string>("comment");
+            set => this.SetAdditionalData("comment", value);
+        }
+        [JsonIgnore]
         public string OrderUrl
         {
             get => this.GetAdditionalData<string>("orderUrl");
@@ -139,6 +145,12 @@ namespace BTCPayServer.Services.Invoices
         {
             get => this.GetAdditionalData<decimal?>("taxIncluded");
             set => this.SetAdditionalData("taxIncluded", value);
+        }
+        [JsonIgnore]
+        public decimal? TaxOnTip
+        {
+            get => this.GetAdditionalData<decimal?>("taxOnTip");
+            set => this.SetAdditionalData("taxOnTip", value);
         }
 
         /// <summary>
