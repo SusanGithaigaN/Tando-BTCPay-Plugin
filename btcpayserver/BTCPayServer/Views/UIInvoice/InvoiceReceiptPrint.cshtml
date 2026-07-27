@@ -1,16 +1,19 @@
 @model BTCPayServer.Models.InvoicingModels.InvoiceReceiptViewModel
 @using BTCPayServer.Client.Models
 @using BTCPayServer.Services
+@using BTCPayServer.Plugins.Translations
 @inject DisplayFormatter DisplayFormatter
+@inject LocalizerService LocalizerService
 @{
     Layout = null;
-    ViewData["Title"] = $"Receipt from {Model.StoreName}";
+    ViewData.SetTitle($"Receipt from {Model.StoreName}");
     var isProcessing = Model.Status == InvoiceStatus.Processing;
     var isFreeInvoice = (Model.Status == InvoiceStatus.New && Model.Amount == 0);
     var isSettled = Model.Status == InvoiceStatus.Settled;
+    var isRtl = LocalizerService.IsRtl;
 }
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"@(isRtl ? " dir=\"rtl\"" : "")>
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -18,10 +21,20 @@
     <meta name="robots" content="noindex">
     <title>@ViewData["Title"]</title>
     @* CSS *@
-    <link href="~/main/bootstrap/bootstrap.css" asp-append-version="true" rel="stylesheet" />
-    <link href="~/main/fonts/OpenSans.css" asp-append-version="true" rel="stylesheet" />
-    <link href="~/main/layout.css" asp-append-version="true" rel="stylesheet" />
-    <link href="~/main/site.css" asp-append-version="true" rel="stylesheet" />
+    @if (isRtl)
+    {
+        <link href="~/main/bootstrap/bootstrap.rtl.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/fonts/OpenSans.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/rtl/layout.rtl.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/rtl/site.rtl.css" asp-append-version="true" rel="stylesheet" />
+    }
+    else
+    {
+        <link href="~/main/bootstrap/bootstrap.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/fonts/OpenSans.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/layout.css" asp-append-version="true" rel="stylesheet" />
+        <link href="~/main/site.css" asp-append-version="true" rel="stylesheet" />
+    }
     <link href="~/main/themes/default.css" asp-append-version="true" rel="stylesheet" />
     <meta name="robots" content="noindex,nofollow">
     @if (isProcessing)
@@ -69,6 +82,7 @@
             margin-bottom: 0px;
         }
     </style>
+    <vc:declare-date-formatter-options></vc:declare-date-formatter-options>
 </head>
 
 <body class="m-0 p-0 bg-white">
@@ -171,6 +185,13 @@
                                 <td class="val text-end">@posData.Tip</td>
                             </tr>
                         }
+						@if (posData.TaxOnTip != null)
+						{
+							<tr class="sums-data">
+								<td class="key text-secondary">Tax on tip</td>
+								<td class="val text-end">@posData.TaxOnTip</td>
+							</tr>
+						}
                         @if (posData.Total != null)
                         {
                             <tr>

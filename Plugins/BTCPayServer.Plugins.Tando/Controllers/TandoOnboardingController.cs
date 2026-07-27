@@ -23,6 +23,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
     private const string PreferredRateSource = "bitcoinkenya";
     private const string DefaultCurrency = "KES";
     private const string PhoneMetadataKey = "tandoPhoneNumber";
+    private const string PlanMetadataKey = "tandoSubscriptionPlanId";
     private static readonly Regex KenyanMsisdn = new(@"^(?:\+254|0)([17]\d{8})$", RegexOptions.Compiled);
 
     [HttpGet("subscription/status")]
@@ -46,8 +47,13 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
 
         var status = await subscriptionService.GetStatus(normalizedPhone);
         if (!status.Configured)
-            return StatusCode(503, new { error = "subscription_not_configured" });
-
+        {
+            return StatusCode(503, new
+            {
+                error = "subscription_not_configured",
+                message = "Subscriptions aren't set up yet. Please contact the Tando team before trying to sign up."
+            });
+        }
         if (!status.Active)
             return StatusCode(402, new { error = "subscription_inactive", phase = status.Phase });
 
@@ -56,6 +62,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         var existingStore = userStore.FirstOrDefault(s => s.StoreName == normalizedPhone);
         if (existingStore is not null)
         {
+            await RefreshPlanMetadata(existingStore, status.PlanId);
             return Ok(new TandoSignupResponse
             {
                 StoreId = existingStore.Id,
@@ -72,6 +79,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         rate.PreferredExchange = PreferredRateSource;
         rate.RateScripting = false;
         blob.AdditionalData[PhoneMetadataKey] = normalizedPhone;
+        blob.AdditionalData[PlanMetadataKey] = status.PlanId;
         store.SetStoreBlob(blob);
         var result = await storeRepository.CreateStore(callerId, store);
         if (result != StoreRepository.CreateStoreResult.Created)
@@ -84,6 +92,19 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             AlreadyExisted = false
         });
     }
+
+    private async Task RefreshPlanMetadata(Data.StoreData store, string? currentPlanId)
+    {
+        var blob = store.GetStoreBlob();
+        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId)
+            return;
+
+        blob.AdditionalData[PlanMetadataKey] = currentPlanId;
+        store.SetStoreBlob(blob);
+        await storeRepository.UpdateStore(store);
+    }
+
+
 
     [HttpPut("stores/{storeId}/lightning/connect")]
     public async Task<IActionResult> ConnectLightning(string storeId, [FromBody] TandoConnectLightningRequest request)

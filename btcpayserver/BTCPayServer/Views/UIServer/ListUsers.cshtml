@@ -12,8 +12,8 @@
         _ => null
     };
     Csp.UnsafeEval();
-    const string sortByDesc = "Sort by email descending...";
-    const string sortByAsc = "Sort by email ascending...";
+    var sortByDesc = StringLocalizer["Sort by email descending..."].Value;
+    var sortByAsc = StringLocalizer["Sort by email ascending..."].Value;
     var currentUserId = User.GetIdOrNull();
 }
 
@@ -31,7 +31,7 @@
 }
 
 <div class="sticky-header">
-    <h2>@ViewData["Title"]</h2>
+    <vc:title-header />
 	<a id="page-primary" asp-action="CreateUser" class="btn btn-primary" role="button" text-translate="true">
         Add User
     </a>

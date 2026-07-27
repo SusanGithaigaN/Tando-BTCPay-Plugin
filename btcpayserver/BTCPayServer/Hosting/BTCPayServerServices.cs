@@ -11,16 +11,12 @@ using BTCPayServer.Configuration;
 using BTCPayServer.Controllers;
 using BTCPayServer.Data;
 using BTCPayServer.Data.Payouts.LightningLike;
-using BTCPayServer.Forms;
 using BTCPayServer.HostedServices;
 using BTCPayServer.Lightning;
-using BTCPayServer.Lightning.Charge;
 using BTCPayServer.Lightning.CLightning;
 using BTCPayServer.Lightning.Eclair;
 using BTCPayServer.Lightning.Phoenixd;
-using BTCPayServer.Lightning.LNbank;
 using BTCPayServer.Lightning.LND;
-using BTCPayServer.Lightning.LNDhub;
 using BTCPayServer.Logging;
 using BTCPayServer.PaymentRequest;
 using BTCPayServer.Payments;
@@ -68,6 +64,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
+using BTCPayServer.Lightning.LNDhub;
 using BTCPayServer.Payouts;
 using BTCPayServer.Plugins.Bitcoin;
 using ExchangeSharp;
@@ -109,16 +106,6 @@ namespace BTCPayServer.Hosting
             {
                 httpClient.Timeout = Timeout.InfiniteTimeSpan;
             });
-            services.AddHttpClient<PluginBuilderClient>((prov, httpClient) =>
-            {
-                var p = prov.GetRequiredService<PoliciesSettings>();
-                var pluginSource = p.PluginSource ?? PoliciesSettings.DefaultPluginSource;
-                if (pluginSource.EndsWith('/'))
-                    pluginSource = pluginSource.Substring(0, pluginSource.Length - 1);
-                if (!Uri.TryCreate(pluginSource, UriKind.Absolute, out var r) || (r.Scheme != "https" && r.Scheme != "http"))
-                    r = new Uri(PoliciesSettings.DefaultPluginSource, UriKind.Absolute);
-                httpClient.BaseAddress = r;
-            });
 
             services.AddSingleton<PrettyNameProvider>();
             services.AddSingleton<Logs>(logs);
@@ -134,8 +121,6 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<ISwaggerProvider, DefaultSwaggerProvider>();
             services.TryAddSingleton<SocketFactory>();
 
-            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
-                new ChargeLightningConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(_ =>
                 new CLightningConnectionStringHandler());
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
@@ -146,8 +131,6 @@ namespace BTCPayServer.Hosting
                 new LndConnectionStringHandler(client));
             services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
                 new LndHubConnectionStringHandler(client));
-            services.AddSingleton<Func<HttpClient, ILightningConnectionStringHandler>>(client =>
-                new LNbankConnectionStringHandler(client));
             services.TryAddSingleton<LightningClientFactoryService>();
             services.AddHttpClient(LightningClientFactoryService.OnionNamedClient)
                 .ConfigurePrimaryHttpMessageHandler<Socks5HttpClientHandler>();
@@ -304,7 +287,6 @@ namespace BTCPayServer.Hosting
 
             services.AddExceptionHandler<PluginExceptionHandler>();
             services.TryAddSingleton<AppService>();
-            services.AddTransient<PluginService>();
             services.AddSingleton<PluginHookService>();
             services.AddSingleton<IPluginHookService, PluginHookService>(provider => provider.GetService<PluginHookService>());
             services.TryAddTransient<Safe>();
@@ -388,7 +370,6 @@ namespace BTCPayServer.Hosting
             services.AddSingleton<IHostedService, HostedServices.CheckConfigurationHostedService>(o => o.GetRequiredService<CheckConfigurationHostedService>());
             services.AddSingleton<IHostedService, PeriodicTaskLauncherHostedService>();
             services.AddScheduledTask<GithubVersionFetcher>(TimeSpan.FromDays(1));
-            services.AddScheduledTask<PluginUpdateFetcher>(TimeSpan.FromDays(1));
 
             services.AddSearchResultItemProvider<ReportingSearchResultProvider>();
             services.AddReportProvider<PaymentsReportProvider>();
@@ -468,7 +449,6 @@ namespace BTCPayServer.Hosting
 
             services.AddSingleton<INotificationHandler, NewVersionNotification.Handler>();
             services.AddSingleton<INotificationHandler, NewUserRequiresApprovalNotification.Handler>();
-            services.AddSingleton<INotificationHandler, PluginUpdateNotification.Handler>();
             services.AddSingleton<INotificationHandler, InvoiceEventNotification.Handler>();
             services.AddSingleton<INotificationHandler, PayoutNotification.Handler>();
             services.AddSingleton<INotificationHandler, ExternalPayoutTransactionNotification.Handler>();
@@ -503,6 +483,7 @@ namespace BTCPayServer.Hosting
                          new("payReqId", "SELECT \"StoreDataId\" FROM \"PaymentRequests\" WHERE \"Id\" = @id"),
                          new("paymentRequestId", "SELECT \"StoreDataId\" FROM \"PaymentRequests\" WHERE \"Id\" = @id"),
                          new("pullPaymentId", "SELECT \"StoreId\" FROM \"PullPayments\" WHERE \"Id\" = @id"),
+                         new("payoutId", "SELECT \"StoreDataId\" FROM \"Payouts\" WHERE \"Id\" = @id"),
                          new("invoiceId", "SELECT \"StoreDataId\" FROM \"Invoices\" WHERE \"Id\" = @id"),
                      })
 
@@ -914,26 +895,39 @@ namespace BTCPayServer.Hosting
                 opt.LoginPath = "/login";
                 opt.AccessDeniedPath = "/errors/403";
                 opt.LogoutPath = "/logout";
+                ConfigureAccessDeniedRedirect(opt);
             });
             services.AddAuthentication()
                 .AddCookie(AuthenticationSchemes.LimitedLogin, options =>
                 {
-                    options.Cookie.Name = "pwd_verified";
+                    options.Cookie.Name = "limited_login";
                     options.ExpireTimeSpan = TimeSpan.FromMinutes(60); // short-lived
                     options.SlidingExpiration = false;
                     options.Cookie.HttpOnly = true;
                     options.Cookie.SecurePolicy = Microsoft.AspNetCore.Http.CookieSecurePolicy.SameAsRequest;
-                    options.Events.OnRedirectToLogin = context =>
-                    {
-                        context.RedirectUri = QueryHelpers.AddQueryString(context.RedirectUri, [KeyValuePair.Create("allowLimitedLogin", "true")]);
-                        context.Response.Redirect(context.RedirectUri);
-                        return Task.CompletedTask;
-                    };
                     options.LoginPath = "/login";
                     options.AccessDeniedPath = "/errors/403";
                     options.LogoutPath = "/logout";
+                    ConfigureAccessDeniedRedirect(options);
                 })
                 .AddAPIKeyAuthentication();
+        }
+
+        private static void ConfigureAccessDeniedRedirect(CookieAuthenticationOptions options)
+        {
+            var onRedirectToAccessDenied = options.Events.OnRedirectToAccessDenied;
+            options.Events.OnRedirectToAccessDenied = context =>
+            {
+                if (context.HttpContext.Items.TryGetValue(PermissionAuthorizationHandler.PolicyRequirementKey, out var p) &&
+                    p is PolicyRequirement policyRequirement)
+                {
+                    context.RedirectUri = QueryHelpers.AddQueryString(
+                        context.RedirectUri,
+                        UIErrorController.MissingPermissionQueryKey,
+                        policyRequirement.Policy);
+                }
+                return onRedirectToAccessDenied(context);
+            };
         }
 
         public static IApplicationBuilder UsePayServer(this IApplicationBuilder app)

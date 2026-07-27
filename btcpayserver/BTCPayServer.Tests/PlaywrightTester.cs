@@ -10,6 +10,8 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Lightning;
 using BTCPayServer.Lightning.CLightning;
+using BTCPayServer.Plugins.Emails.Services;
+using BTCPayServer.Services;
 using BTCPayServer.Tests.PMO;
 using BTCPayServer.Views.Manage;
 using BTCPayServer.Views.Server;
@@ -46,18 +48,20 @@ namespace BTCPayServer.Tests
             await Server.StartAsync();
             var builder = new ConfigurationBuilder();
             builder.AddUserSecrets("AB0AC1DD-9D26-485B-9416-56A33F268117");
+            builder.AddEnvironmentVariables();
             var conf = builder.Build();
             var playwright = await Playwright.CreateAsync();
+            var headless = conf["PLAYWRIGHT_HEADLESS"];
             Browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
-                Headless = Server.PayTester.InContainer || conf["PLAYWRIGHT_HEADLESS"] == "true",
+                Headless = !string.IsNullOrEmpty(headless) && bool.Parse(headless),
                 ExecutablePath = conf["PLAYWRIGHT_EXECUTABLE"],
                 SlowMo = 0, // 50 if you want to slow down
                 Args = ["--disable-frame-rate-limit"] // Fix slowness on linux (https://github.com/microsoft/playwright/issues/34625#issuecomment-2822015672)
             });
             var context = await Browser.NewContextAsync();
             Page = await context.NewPageAsync();
-            ServerUri = Server.PayTester.ServerUri;
+            ServerUri ??= Server.PayTester.ServerUri;
             TestLogs.LogInformation($"Playwright: Using {Page.GetType()}");
             TestLogs.LogInformation($"Playwright: Browsing to {ServerUri}");
             await GoToRegister();
@@ -406,13 +410,6 @@ namespace BTCPayServer.Tests
 
         public async Task GoToServer(string navPages)
         {
-            if (navPages == nameof(ServerNavPages.Plugins))
-            {
-                await Page.ClickAsync("#globalNavPluginsToggle");
-                await Page.ClickAsync("#globalNavPluginsMenu #menu-item-Plugins");
-                return;
-            }
-
             await Page.ClickAsync("#globalNavServerToggle");
             if (navPages == nameof(ServerNavPages.Emails))
             {
@@ -426,7 +423,11 @@ namespace BTCPayServer.Tests
         public async Task ClickOnAllSectionLinks(string sectionSelector = "#menu-item")
         {
             List<string> links = [];
-            foreach (var locator in await Page.Locator($"{sectionSelector} .nav-link").AllAsync())
+            var linkLocator = Page.Locator($"{sectionSelector} a.nav-link");
+            if (await linkLocator.CountAsync() == 0)
+                linkLocator = Page.Locator($"{sectionSelector} a.dropdown-item");
+
+            foreach (var locator in await linkLocator.AllAsync())
             {
                 var link = await locator.GetAttributeAsync("href");
                 if (link is null or "/logout")
@@ -474,7 +475,7 @@ namespace BTCPayServer.Tests
             await FindAlertMessage();
         }
 
-        public async Task AddLightningNode(string connectionType = null, bool test = true)
+        public async Task AddLightningNode(LightningTestImplementation connectionType = LightningTestImplementation.Internal, bool test = true)
         {
             var cryptoCode = "BTC";
             if (!(await Page.ContentAsync()).Contains("Connect to a Lightning node"))
@@ -484,9 +485,9 @@ namespace BTCPayServer.Tests
 
             var connectionString = connectionType switch
             {
-                LightningConnectionType.CLightning =>
+                LightningTestImplementation.CoreLightning =>
                     $"type=clightning;server={((CLightningClient)Server.MerchantLightningD).Address.AbsoluteUri}",
-                LightningConnectionType.LndREST =>
+                LightningTestImplementation.LND =>
                     $"type=lnd-rest;server={Server.MerchantLnd.Swagger.BaseUrl};allowinsecure=true",
                 _ => null
             };
@@ -532,6 +533,20 @@ namespace BTCPayServer.Tests
         public async Task ClickPagePrimary()
         {
             await Page.Locator("#page-primary").ClickAsync();
+        }
+
+        public async Task ConfigureServerEmailWithMailPit(string from = "test@example.com", string login = "test@example.com", string password = "password")
+        {
+            var settings = Server.PayTester.GetService<SettingsRepository>();
+            await settings.UpdateSetting(new PoliciesSettings { DisableStoresToUseServerEmailSettings = false });
+            await settings.UpdateSetting(new EmailSettings
+            {
+                From = from,
+                Login = login,
+                Password = password,
+                Port = Server.MailPitSettings.SmtpPort,
+                Server = Server.MailPitSettings.Hostname
+            });
         }
 
         public async Task AddStoreLabelAsync(ILocator row, string label)
@@ -645,7 +660,15 @@ namespace BTCPayServer.Tests
 
             await Server.ExplorerNode.GenerateAsync(1);
             await Page.ReloadAsync();
-            await Page.Locator("#CancelWizard").ClickAsync();
+            try
+            {
+                await Page.Locator("#CancelWizard").ClickAsync();
+            }
+            catch
+            {
+                await TakeScreenshot("flaky-FundStoreWallet.png");
+                throw;
+            }
             return addressStr;
         }
 
@@ -902,7 +925,7 @@ namespace BTCPayServer.Tests
         public async Task AssertPageAccess(bool shouldHaveAccess, string url)
         {
             await GoToUrl(url);
-            await Page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+            await Page.WaitForLoadStateAsync(LoadState.Load);
             var content = await Page.ContentAsync();
             Assert.DoesNotContain("404 - Page not found", content);
             if (shouldHaveAccess)
@@ -982,5 +1005,15 @@ namespace BTCPayServer.Tests
             => Expect(Page.Locator(selector)).ToHaveCountAsync(0);
 
         public GlobalSearchPMO GlobalSearch => new GlobalSearchPMO(this);
+
+        public SearchFiltersPMO SearchFilters => new SearchFiltersPMO(this);
+
+        public async Task WaitLoggedIn()
+        {
+            if (StoreId is null)
+                await Page.WaitForURLAsync(ServerUri.AbsoluteUri + $"stores/create");
+            else
+                await Page.WaitForURLAsync(ServerUri.AbsoluteUri + $"stores/{StoreId}");
+        }
     }
 }

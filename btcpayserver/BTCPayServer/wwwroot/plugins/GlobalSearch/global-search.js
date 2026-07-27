@@ -40,17 +40,23 @@
         const localIndexTmp = [];
         vm.items.forEach(item => localIndexTmp.push(item));
         const localIndex = removeDups(localIndexTmp);
+        const localFuse = new window.Fuse(localIndex, {
+                ignoreLocation: true,
+                threshold: 0.35,
+                useExtendedSearch: true,
+                keys: [
+                    {name: 'title', weight: 0.5},
+                    {name: 'keywords', weight: 0.35},
+                    {name: 'category', weight: 0.1},
+                    {name: 'subtitle', weight: 0.05}
+                ]
+            });
 
-        const now = new Date();
-        const todayIso = now.toISOString().slice(0, 10);
-        const yesterday = new Date(now);
-        yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-        const yesterdayIso = yesterday.toISOString().slice(0, 10);
         const suggestedQueries = [
-            {query: `date:${todayIso}`, hint: 'Find invoices and requests created today'},
-            {query: `date:${yesterdayIso}`, hint: 'Find invoices and requests from yesterday'},
-            {query: 'tx:4e3a67', hint: 'Find by transaction id (prefix supported)'},
-            {query: 'server settings', hint: 'Jump to server settings pages quickly'}
+            {query: '4e3a67', hint: vm.translate['Find by transaction id (prefix supported)']},
+            {query: 'K4cDPJ3Hkv3bWTq8zpHGoW', hint: vm.translate['Find by invoice id']},
+            {query: '1Nro9WkpaKm9axmcfPVp79dAJU1Gx7VmMZ', hint: vm.translate['Find by address']},
+            {query: vm.translate['Get a deposit address'], hint: vm.translate['Jump to pages quickly']},
         ];
 
         let latestSearchToken = 0;
@@ -288,29 +294,9 @@
             }
         };
 
-        // This is a case-insensitive search.
-        // The query is split, and all the parts need to match the item.
-        // For example, "Bit wall" can match "Bitcoin wallet", but so does "wall bit"
         const searchLocal = query => {
             if (!query) return [];
-            var normalized = query.toLowerCase().split(/\s+/);
-
-            var found = 0;
-            return localIndex
-                .filter(item => {
-                    if (found >= 12)
-                        return false;
-                    const title = (item.title || '');
-                    const keywords = (item.keywords || []);
-                    var all = [];
-                    keywords.forEach(keyword => { all.push(keyword.toLowerCase()); })
-                    all.push(title.toLowerCase());
-                    if (item.category)
-                        all.push(item.category.toLowerCase());
-                    var match = normalized.every(n => all.some(a => a.startsWith(n)));
-                    if (match) found++;
-                    return match;
-                });
+            return localFuse.search(query, {limit: 12}).map(result => result.item);
         };
 
         const searchRemote = async query => {
@@ -459,6 +445,8 @@
         });
 
         syncSearchActionState();
+        if (!!input.value.trim())
+            runSearch();
     };
 
     const isEditableElement = element => {

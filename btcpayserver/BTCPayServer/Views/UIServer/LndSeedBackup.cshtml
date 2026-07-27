@@ -2,18 +2,11 @@
 @{
     ViewData.SetLayoutModel(new LayoutModel(nameof(ServerNavPages.Services), StringLocalizer["LND Seed Backup"])
         .SetCategory(WellKnownCategories.Server));
+    ViewData.SetBreadcrumbs([new(StringLocalizer["Services"], Action: nameof(BTCPayServer.Controllers.UIServerController.Services))]);
 }
 
 <div class="sticky-header">
-    <nav aria-label="breadcrumb">
-        <ol class="breadcrumb">
-            <li class="breadcrumb-item">
-                <a asp-action="Services" text-translate="true">Services</a>
-            </li>
-            <li class="breadcrumb-item active" aria-current="page">@ViewData["Title"]</li>
-        </ol>
-        <h2>@ViewData["Title"]</h2>
-    </nav>
+    <vc:title-header />
 </div>
 <partial name="_StatusMessage" />
 
@@ -26,7 +19,7 @@
                 <p>The recovering process is documented by LND on <a href="https://github.com/lightningnetwork/lnd/blob/master/docs/recovery.md" rel="noreferrer noopener">this page</a>.</p>
             </div>
             <button class="btn btn-primary @(Model.Removed ? "collapse" : "")" id="details" type="button" text-translate="true">See confidential seed information</button>
-            
+
             @if (Model.Removed)
             {
                 <div class="alert alert-light d-flex align-items-center" role="alert">

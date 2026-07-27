@@ -1,7 +1,11 @@
+@using BTCPayServer.Client
 @model BTCPayServer.Components.MainNav.MainNavViewModel
 
-<li permission="@BTCPayServer.Client.Policies.CanModifyServerSettings">
-    <a layout-menu-item="@nameof(TandoBusinessPage.Settings)" asp-controller="UITandoSettings" asp-action="Settings">
-        <span text-translate="true">Tando Business</span>
-    </a>
+<li permission="@Policies.CanModifyServerSettings">
+    <a id="menu-item-Tando"
+       class="dropdown-item@(ViewData["ActivePage"]?.ToString() == "Tando" ? " active" : "")"
+       asp-area=""
+       asp-controller="UITandoSettings"
+       asp-action="Settings"
+       text-translate="true">Tando Business</a>
 </li>
