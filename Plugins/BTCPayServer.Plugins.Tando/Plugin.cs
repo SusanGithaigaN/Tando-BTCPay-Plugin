@@ -18,7 +18,7 @@ public class Plugin : BaseBTCPayServerPlugin
 
     public override void Execute(IServiceCollection services)
     {
-        services.AddSingleton<IUIExtension>(new UIExtension("TandoPluginHeaderNav", "header-nav"));
+        /*services.AddSingleton<IUIExtension>(new UIExtension("TandoPluginHeaderNav", "header-nav"));*/
         services.AddSingleton<IUIExtension>(new UIExtension("TandoServerNav", "server-nav"));
         services.AddHostedService<ApplicationPartsLogger>();
         services.AddSingleton<TandoSubscriptionService>();
