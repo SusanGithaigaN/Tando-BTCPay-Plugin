@@ -13,18 +13,21 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 
-namespace BTCPayServer.Plugins.MassStoreGenerator;
+namespace BTCPayServer.Plugins.Tando;
 
 [Route("~/plugins/api/tando/")]
 [Authorize(Policy = Policies.CanModifyStoreSettingsUnscoped, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 [IgnoreAntiforgeryToken]
-public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService) : Controller
+public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService, 
+    TandoProductProvisioningService productProvisioningService) : Controller
 {
     private const string PreferredRateSource = "bitcoinkenya";
     private const string DefaultCurrency = "KES";
     private const string PhoneMetadataKey = "tandoPhoneNumber";
     private const string PlanMetadataKey = "tandoSubscriptionPlanId";
     private static readonly Regex KenyanMsisdn = new(@"^(?:\+254|0)([17]\d{8})$", RegexOptions.Compiled);
+    private const string MpesaSettingsMetadataKey = "tandoMpesaSettings";
+    private static readonly Regex TillOrPayBillNumber = new(@"^\d{5,7}$", RegexOptions.Compiled);
 
     [HttpGet("subscription/status")]
     public async Task<IActionResult> SubscriptionStatus([FromQuery] string phoneNumber)
@@ -63,11 +66,19 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         if (existingStore is not null)
         {
             await RefreshPlanMetadata(existingStore, status.PlanId);
+            var (hasPos, hasCart) = await productProvisioningService.GetProvisioningStatus(existingStore.Id);
+            string? posAppId = null, cartAppId = null;
+            if (!hasPos || !hasCart)
+            {
+                (posAppId, cartAppId) = await productProvisioningService.ProvisionDefaultApps(existingStore);
+            }
             return Ok(new TandoSignupResponse
             {
                 StoreId = existingStore.Id,
                 PhoneNumber = normalizedPhone,
-                AlreadyExisted = true
+                AlreadyExisted = true,
+                PosAppId = posAppId,
+                CartAppId = cartAppId
             });
         }
 
@@ -85,26 +96,77 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         if (result != StoreRepository.CreateStoreResult.Created)
             return BadRequest(new { error = "store_creation_failed", detail = result.ToString() });
 
+        var (posAppIdNew, cartAppIdNew) = await productProvisioningService.ProvisionDefaultApps(store);
         return Ok(new TandoSignupResponse
         {
             StoreId = store.Id,
             PhoneNumber = normalizedPhone,
-            AlreadyExisted = false
+            AlreadyExisted = false,
+            PosAppId = posAppIdNew,
+            CartAppId = cartAppIdNew
         });
     }
 
-    private async Task RefreshPlanMetadata(Data.StoreData store, string? currentPlanId)
+    [HttpGet("stores/{storeId}/mpesa/settings")]
+    public async Task<IActionResult> GetMpesaSettings(string storeId)
     {
-        var blob = store.GetStoreBlob();
-        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId)
-            return;
+        var store = await storeRepository.FindStore(storeId);
+        if (store is null)
+            return NotFound(new { error = "store_not_found" });
 
-        blob.AdditionalData[PlanMetadataKey] = currentPlanId;
-        store.SetStoreBlob(blob);
-        await storeRepository.UpdateStore(store);
+        var blob = store.GetStoreBlob();
+        var settings = blob.AdditionalData[MpesaSettingsMetadataKey];
+        if (settings is null)
+            return Ok(new { storeId, settings = (object?)null });
+
+        return Ok(new { storeId, settings });
     }
 
+    [HttpPut("stores/{storeId}/mpesa/settings")]
+    public async Task<IActionResult> SaveMpesaSettings(string storeId, [FromBody] TandoMpesaSettingsRequest request)
+    {
+        var store = await storeRepository.FindStore(storeId);
+        if (store is null)
+            return NotFound(new { error = "store_not_found" });
 
+        if (string.IsNullOrWhiteSpace(request?.Destination))
+            return BadRequest(new { error = "destination_required" });
+
+        string normalizedDestination;
+        switch (request.DestinationType)
+        {
+            case TandoMpesaDestinationType.MobileNumber:
+                var normalizedPhone = NormalizePhone(request.Destination, out var phoneError);
+                if (normalizedPhone is null) return phoneError!;
+                normalizedDestination = normalizedPhone;
+                break;
+
+            case TandoMpesaDestinationType.TillNumber:
+            case TandoMpesaDestinationType.PayBill:
+                if (!TillOrPayBillNumber.IsMatch(request.Destination.Trim()))
+                    return BadRequest(new { error = "invalid_till_or_paybill_number", detail = "Expected a 5-7 digit number." });
+                normalizedDestination = request.Destination.Trim();
+                break;
+
+            default:
+                return BadRequest(new { error = "invalid_destination_type" });
+        }
+        if (request.DestinationType == TandoMpesaDestinationType.PayBill && string.IsNullOrWhiteSpace(request.AccountNumber))
+        {
+            return BadRequest(new { error = "account_number_required_for_paybill" });
+        }
+        var settingsToStore = new
+        {
+            destinationType = request.DestinationType.ToString(),
+            destination = normalizedDestination,
+            accountNumber = request.DestinationType == TandoMpesaDestinationType.PayBill ? request.AccountNumber!.Trim() : null
+        };
+        var blob = store.GetStoreBlob();
+        blob.AdditionalData[MpesaSettingsMetadataKey] = JToken.FromObject(settingsToStore);
+        store.SetStoreBlob(blob);
+        await storeRepository.UpdateStore(store);
+        return Ok(new { storeId, settings = settingsToStore });
+    }
 
     [HttpPut("stores/{storeId}/lightning/connect")]
     public async Task<IActionResult> ConnectLightning(string storeId, [FromBody] TandoConnectLightningRequest request)
@@ -136,5 +198,16 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         }
         error = null;
         return "254" + match.Groups[1].Value;
+    }
+
+    private async Task RefreshPlanMetadata(StoreData store, string? currentPlanId)
+    {
+        var blob = store.GetStoreBlob();
+        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId)
+            return;
+
+        blob.AdditionalData[PlanMetadataKey] = currentPlanId;
+        store.SetStoreBlob(blob);
+        await storeRepository.UpdateStore(store);
     }
 }

@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.Extensions.Localization;
 
-namespace BTCPayServer.Plugins.MassStoreGenerator;
+namespace BTCPayServer.Plugins.Tando;
 
 [Authorize(Policy = Policies.CanModifyServerSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Route("server/tando")]
