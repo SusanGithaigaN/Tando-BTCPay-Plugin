@@ -5,8 +5,8 @@ using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
+using BTCPayServer.Models.StoreViewModels;
 using BTCPayServer.Plugins.MassStoreGenerator.Helper;
-using BTCPayServer.Plugins.MassStoreGenerator.ViewModels;
 using BTCPayServer.Services.Rates;
 using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
@@ -14,7 +14,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
 
-namespace BTCPayServer.Plugins.MassStoreGenerator;
+namespace BTCPayServer.Plugins.Tando;
 
 [Route("~/plugins/{storeId}/storesgenerator/")]
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie, Policy = Policies.CanModifyStoreSettings)]
@@ -32,8 +32,6 @@ public class UITandoController(RateFetcher rateFactory, StoreRepository storeRep
         var hasPermission = await authorizationService.AuthorizeAsync(User, CurrentStore.Id, Policies.CanModifyStoreSettingsUnscoped);
         CreateStoreViewModel vm = new CreateStoreViewModel
         {
-            StoreId = CurrentStore.Id,
-            HasStoreCreationPermission = hasPermission.Succeeded,
             DefaultCurrency = StoreBlobHelper.StandardDefaultCurrency,
             Exchanges = GetExchangesSelectList(null)
         };

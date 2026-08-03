@@ -15,7 +15,7 @@
 <div class="row">
     <div class="col-xxl-constrain col-xl-10">
         <p class="text-secondary" text-translate="true">
-            Tando reads merchant subscription plans from an Offering already configured. Pick which offering represents the Tando plans below.
+            Tando reads merchant subscription plans from an Offering already configured. Pick the offering and the specific plan every merchant should be tied to.
         </p>
 
         @if (Model.Offerings.Any())
@@ -23,11 +23,28 @@
             <form method="post">
                 <div class="form-group mb-3">
                     <label asp-for="SubscriptionOfferingId" class="form-label" text-translate="true">Subscription offering</label>
-                    <select asp-for="SubscriptionOfferingId" asp-items="Model.Offerings" class="form-select w-auto">
+                    <select asp-for="SubscriptionOfferingId" asp-items="Model.Offerings" class="form-select w-auto"
+                            onchange="location.href = '@Url.Action("Settings")?offeringId=' + this.value">
                         <option value="" text-translate="true">Select an offering...</option>
                     </select>
                     <span asp-validation-for="SubscriptionOfferingId" class="text-danger"></span>
                 </div>
+
+                @if (Model.Plans.Any())
+                {
+                    <div class="form-group mb-3">
+                        <label asp-for="SubscriptionPlanId" class="form-label" text-translate="true">Plan merchants are tied to</label>
+                        <select asp-for="SubscriptionPlanId" asp-items="Model.Plans" class="form-select w-auto">
+                            <option value="" text-translate="true">Select a plan...</option>
+                        </select>
+                        <span asp-validation-for="SubscriptionPlanId" class="text-danger"></span>
+                    </div>
+                }
+                else if (!string.IsNullOrEmpty(Model.SubscriptionOfferingId))
+                {
+                    <div class="alert alert-warning" role="alert" text-translate="true">The selected offering has no active plans yet. Add a plan to continue.</div>
+                }
+
                 <button id="page-primary" type="submit" class="btn btn-primary" text-translate="true">Save</button>
             </form>
         }

@@ -13,4 +13,6 @@ public class TandoSignupResponse
     public string StoreId { get; set; }
     public string PhoneNumber { get; set; }
     public bool AlreadyExisted { get; set; }
+    public string? PosAppId { get; set; }
+    public string? CartAppId { get; set; }
 }
