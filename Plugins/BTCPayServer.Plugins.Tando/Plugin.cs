@@ -2,6 +2,7 @@ using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
 using BTCPayServer.Models.ServerViewModels;
+using BTCPayServer.Plugins.Subscriptions;
 using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Template.Services;
@@ -22,6 +23,7 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<IUIExtension>(new UIExtension("TandoServerNav", "server-nav"));
         services.AddHostedService<ApplicationPartsLogger>();
         services.AddSingleton<TandoSubscriptionService>();
+        services.AddSingleton<SubscriptionHostedService>();
         services.AddScoped<TandoProductProvisioningService>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {

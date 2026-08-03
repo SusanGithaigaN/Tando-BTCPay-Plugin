@@ -1,7 +1,10 @@
+using System;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
+using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
@@ -13,7 +16,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json.Linq;
 
-namespace BTCPayServer.Plugins.Tando;
+namespace BTCPayServer.Plugins.MassStoreGenerator;
 
 [Route("~/plugins/api/tando/")]
 [Authorize(Policy = Policies.CanModifyStoreSettingsUnscoped, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
@@ -25,9 +28,8 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
     private const string DefaultCurrency = "KES";
     private const string PhoneMetadataKey = "tandoPhoneNumber";
     private const string PlanMetadataKey = "tandoSubscriptionPlanId";
+
     private static readonly Regex KenyanMsisdn = new(@"^(?:\+254|0)([17]\d{8})$", RegexOptions.Compiled);
-    private const string MpesaSettingsMetadataKey = "tandoMpesaSettings";
-    private static readonly Regex TillOrPayBillNumber = new(@"^\d{5,7}$", RegexOptions.Compiled);
 
     [HttpGet("subscription/status")]
     public async Task<IActionResult> SubscriptionStatus([FromQuery] string phoneNumber)
@@ -39,8 +41,18 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         return Ok(status);
     }
 
+    [HttpGet("subscription/plans")]
+    public async Task<IActionResult> SubscriptionPlans()
+    {
+        var plans = await subscriptionService.GetAvailablePlans();
+        if (plans is null)
+            return Ok(new { configured = false, plans = Array.Empty<TandoPlan>() });
+
+        return Ok(new { configured = true, plans });
+    }
+
     [HttpPost("signup")]
-    public async Task<IActionResult> Signup([FromBody] TandoSignupRequest request)
+    public async Task<IActionResult> Signup([FromBody] TandoSignupRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request?.PhoneNumber))
             return BadRequest(new { error = "phone_number_required" });
@@ -58,20 +70,26 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             });
         }
         if (!status.Active)
-            return StatusCode(402, new { error = "subscription_inactive", phase = status.Phase });
+        {
+            try
+            {
+                status = await subscriptionService.CreateFreeTrialSubscriber(normalizedPhone, Request.GetRequestBaseUrl(), cancellationToken);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return StatusCode(503, new { error = "subscription_not_configured", message = ex.Message });
+            }
 
+            if (!status.Active)
+                return StatusCode(500, new { error = "subscriber_creation_failed" });
+        }
         var callerId = User.GetId();
         var userStore = await storeRepository.GetStoresByUserId(callerId);
         var existingStore = userStore.FirstOrDefault(s => s.StoreName == normalizedPhone);
         if (existingStore is not null)
         {
             await RefreshPlanMetadata(existingStore, status.PlanId);
-            var (hasPos, hasCart) = await productProvisioningService.GetProvisioningStatus(existingStore.Id);
-            string? posAppId = null, cartAppId = null;
-            if (!hasPos || !hasCart)
-            {
-                (posAppId, cartAppId) = await productProvisioningService.ProvisionDefaultApps(existingStore);
-            }
+            var (posAppId, cartAppId) = await productProvisioningService.ProvisionDefaultApps(existingStore);
             return Ok(new TandoSignupResponse
             {
                 StoreId = existingStore.Id,
@@ -81,7 +99,6 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
                 CartAppId = cartAppId
             });
         }
-
         var store = await storeRepository.GetDefaultStoreTemplate();
         store.StoreName = normalizedPhone;
         var blob = store.GetStoreBlob();
@@ -96,76 +113,37 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         if (result != StoreRepository.CreateStoreResult.Created)
             return BadRequest(new { error = "store_creation_failed", detail = result.ToString() });
 
-        var (posAppIdNew, cartAppIdNew) = await productProvisioningService.ProvisionDefaultApps(store);
+        var (newPosAppId, newCartAppId) = await productProvisioningService.ProvisionDefaultApps(store);
         return Ok(new TandoSignupResponse
         {
             StoreId = store.Id,
             PhoneNumber = normalizedPhone,
             AlreadyExisted = false,
-            PosAppId = posAppIdNew,
-            CartAppId = cartAppIdNew
+            PosAppId = newPosAppId,
+            CartAppId = newCartAppId
         });
     }
 
-    [HttpGet("stores/{storeId}/mpesa/settings")]
-    public async Task<IActionResult> GetMpesaSettings(string storeId)
+    private async Task RefreshPlanMetadata(StoreData store, string? currentPlanId)
     {
-        var store = await storeRepository.FindStore(storeId);
-        if (store is null)
-            return NotFound(new { error = "store_not_found" });
-
         var blob = store.GetStoreBlob();
-        var settings = blob.AdditionalData[MpesaSettingsMetadataKey];
-        if (settings is null)
-            return Ok(new { storeId, settings = (object?)null });
+        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId) return; 
 
-        return Ok(new { storeId, settings });
-    }
-
-    [HttpPut("stores/{storeId}/mpesa/settings")]
-    public async Task<IActionResult> SaveMpesaSettings(string storeId, [FromBody] TandoMpesaSettingsRequest request)
-    {
-        var store = await storeRepository.FindStore(storeId);
-        if (store is null)
-            return NotFound(new { error = "store_not_found" });
-
-        if (string.IsNullOrWhiteSpace(request?.Destination))
-            return BadRequest(new { error = "destination_required" });
-
-        string normalizedDestination;
-        switch (request.DestinationType)
-        {
-            case TandoMpesaDestinationType.MobileNumber:
-                var normalizedPhone = NormalizePhone(request.Destination, out var phoneError);
-                if (normalizedPhone is null) return phoneError!;
-                normalizedDestination = normalizedPhone;
-                break;
-
-            case TandoMpesaDestinationType.TillNumber:
-            case TandoMpesaDestinationType.PayBill:
-                if (!TillOrPayBillNumber.IsMatch(request.Destination.Trim()))
-                    return BadRequest(new { error = "invalid_till_or_paybill_number", detail = "Expected a 5-7 digit number." });
-                normalizedDestination = request.Destination.Trim();
-                break;
-
-            default:
-                return BadRequest(new { error = "invalid_destination_type" });
-        }
-        if (request.DestinationType == TandoMpesaDestinationType.PayBill && string.IsNullOrWhiteSpace(request.AccountNumber))
-        {
-            return BadRequest(new { error = "account_number_required_for_paybill" });
-        }
-        var settingsToStore = new
-        {
-            destinationType = request.DestinationType.ToString(),
-            destination = normalizedDestination,
-            accountNumber = request.DestinationType == TandoMpesaDestinationType.PayBill ? request.AccountNumber!.Trim() : null
-        };
-        var blob = store.GetStoreBlob();
-        blob.AdditionalData[MpesaSettingsMetadataKey] = JToken.FromObject(settingsToStore);
+        blob.AdditionalData[PlanMetadataKey] = currentPlanId;
         store.SetStoreBlob(blob);
         await storeRepository.UpdateStore(store);
-        return Ok(new { storeId, settings = settingsToStore });
+    }
+
+    private string? NormalizePhone(string phoneNumber, out IActionResult? error)
+    {
+        var match = KenyanMsisdn.Match((phoneNumber ?? string.Empty).Trim());
+        if (!match.Success)
+        {
+            error = BadRequest(new { error = "invalid_phone_number", detail = "Expected a Kenyan MSISDN, e.g. 0712345678 or +254712345678." });
+            return null;
+        }
+        error = null;
+        return "254" + match.Groups[1].Value;
     }
 
     [HttpPut("stores/{storeId}/lightning/connect")]
@@ -186,28 +164,5 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         store.SetStoreBlob(blob);
         await storeRepository.UpdateStore(store);
         return Ok(new { storeId, paymentMethodId = paymentMethodId.ToString() });
-    }
-
-    private string? NormalizePhone(string phoneNumber, out IActionResult? error)
-    {
-        var match = KenyanMsisdn.Match((phoneNumber ?? string.Empty).Trim());
-        if (!match.Success)
-        {
-            error = BadRequest(new { error = "invalid_phone_number", detail = "Expected a Kenyan MSISDN, e.g. 0712345678 or +254712345678." });
-            return null;
-        }
-        error = null;
-        return "254" + match.Groups[1].Value;
-    }
-
-    private async Task RefreshPlanMetadata(StoreData store, string? currentPlanId)
-    {
-        var blob = store.GetStoreBlob();
-        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId)
-            return;
-
-        blob.AdditionalData[PlanMetadataKey] = currentPlanId;
-        store.SetStoreBlob(blob);
-        await storeRepository.UpdateStore(store);
     }
 }
