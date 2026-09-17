@@ -27,6 +27,22 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddScoped<TandoMerchantSettingsService>();
         services.AddScoped<TandoSplitService>();
         services.AddTandoPhoneVerification();
+        services.AddSingleton<MpesaPaymentProvider>(sp => sp.GetRequiredService<SplicePspService>());
+        services.AddSingleton<MpesaPayoutProvider, UnconfiguredMpesaPayoutProvider>();
+        services.AddSingleton<SplicePspService>();
+        services.AddSingleton<MpesaLedger, BTCPayMpesaLedger>();
+        services.AddSingleton<MpesaWorkflow>();
+        services.AddSingleton<MpesaWorkflowProvider>(sp =>
+        {
+            var config = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
+            var mode = config["Tando:Payments:Mode"] ?? "Splice";
+            var environment = sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>();
+            TandoProviderModeGuard.Validate(mode, "Splice", environment);
+            if (string.Equals(mode, "Splice", System.StringComparison.OrdinalIgnoreCase))
+                return new SpliceWorkflowProvider();
+            return new DevelopmentMpesaWorkflowProvider(sp.GetRequiredService<MpesaLedger>(),
+                sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>());
+        });
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {
             Name = "Tando",

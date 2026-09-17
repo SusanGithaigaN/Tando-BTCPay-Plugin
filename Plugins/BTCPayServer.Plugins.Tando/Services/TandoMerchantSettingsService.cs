@@ -81,17 +81,9 @@ public class TandoMerchantSettingsService(StoreRepository storeRepository)
         return new TandoSplitConfigResponse { MpesaPercentage = 0 };
     }
 
-    public async Task<bool> SaveSplitConfig(string storeId, TandoSplitConfigRequest request)
-    {
-        var store = await storeRepository.FindStore(storeId);
-        if (store is null) return false;
-
-        var blob = store.GetStoreBlob();
-        blob.AdditionalData[SplitConfigKey] = JToken.FromObject(new TandoSplitConfigResponse { MpesaPercentage = request.MpesaPercentage });
-        store.SetStoreBlob(blob);
-        await storeRepository.UpdateStore(store);
-        return true;
-    }
+    // Retained for callers compiled against the legacy API; never writes conversion settings.
+    public Task<bool> SaveSplitConfig(string storeId, TandoSplitConfigRequest request) =>
+        Task.FromResult(false);
 
     private static bool IsDigitsOnly(string value, int minLength, int maxLength)
     {

@@ -27,7 +27,7 @@ public class TandoSplitController(TandoSplitService splitService) : Controller
     {
         var (record, error) = await splitService.ComputeAndRecordSplit(storeId, invoiceId);
         if (error is not null)
-            return NotFound(new { error });
+            return StatusCode(410, new { error });
 
         return Ok(record);
     }
@@ -37,7 +37,7 @@ public class TandoSplitController(TandoSplitService splitService) : Controller
     {
         var (success, error) = await splitService.MarkMpesaSettled(storeId, invoiceId);
         if (!success)
-            return error == "invoice_not_found" ? NotFound(new { error }) : BadRequest(new { error });
+            return StatusCode(410, new { error });
 
         return Ok();
     }

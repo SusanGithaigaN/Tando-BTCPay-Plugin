@@ -1,0 +1,656 @@
+{
+  "info": {
+    "name": "Tando shared KES payment workflow",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Explicit Development payment mock required. Uses a real local BTCPay store and durable ledger. Set a fresh orderId for each collection run."
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "Authorization",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "token {{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:14142"
+    },
+    {
+      "key": "apiKey",
+      "value": ""
+    },
+    {
+      "key": "storeId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": "postman-001"
+    }
+  ],
+  "item": [
+    {
+      "name": "Provider status",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/status",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"provider\", () => pm.expect(pm.response.json()[\"provider\"]).to.eql(\"Mock\"));",
+              "pm.test(\"ready\", () => pm.expect(pm.response.json()[\"ready\"]).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Save test merchant destination",
+      "request": {
+        "method": "PUT",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/settings",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"destinationType\": 0,\n  \"destination\": \"254702345678\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Initiate",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Pending\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Duplicate initiation",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Pending\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Idempotency conflict",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 200,\n  \"orderId\": \"{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 409\", () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Collection confirmed",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Pending\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Succeeded\"));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Pending\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Disbursement confirmed",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Succeeded\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Succeeded\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Duplicate callback",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Succeeded\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Succeeded\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conflicting callback",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Failed\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 409\", () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Read settled payment",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/{{orderId}}",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Succeeded\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lost acknowledgement",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"mock-lost-ack-{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Unknown\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reconcile acknowledgement",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/mock-lost-ack-{{orderId}}/reconcile",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Pending\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lose successful callback",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/mock-lost-ack-{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Succeeded\",\n  \"deliver\": false\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"delivered\", () => pm.expect(pm.response.json()[\"delivered\"]).to.eql(false));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reconcile lost callback",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/mock-lost-ack-{{orderId}}/reconcile",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ]
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Succeeded\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Outage",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"mock-outage-{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Unknown\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Initiate failed-collection",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"failed-collection-{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-collection",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/failed-collection-{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Failed\",\n  \"disbursement\": \"Unknown\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Failed\"));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Unknown\"));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Initiate failed-payout",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/pay",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"customerPhone\": \"0701234567\",\n  \"amountKes\": 100,\n  \"orderId\": \"failed-payout-{{orderId}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "failed-payout",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/plugins/api/tando/stores/{{storeId}}/mpesa/payments/failed-payout-{{orderId}}/mock-callback",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amountKes\": 100,\n  \"destination\": \"254702345678\",\n  \"collection\": \"Succeeded\",\n  \"disbursement\": \"Failed\",\n  \"deliver\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"collection\", () => pm.expect(pm.response.json()[\"collection\"]).to.eql(\"Succeeded\"));",
+              "pm.test(\"disbursement\", () => pm.expect(pm.response.json()[\"disbursement\"]).to.eql(\"Failed\"));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

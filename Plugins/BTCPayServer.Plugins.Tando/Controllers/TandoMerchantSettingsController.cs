@@ -44,25 +44,6 @@ public class TandoMerchantSettingsController(TandoMerchantSettingsService settin
     public async Task<IActionResult> GetSplitConfig(string storeId) => Ok(await settingsService.GetSplitConfig(storeId));
 
     [HttpPut("split-config")]
-    public async Task<IActionResult> SaveSplitConfig(string storeId, [FromBody] TandoSplitConfigRequest request)
-    {
-        if (request is null || request.MpesaPercentage is < 0 or > 100)
-            return BadRequest(new { error = "invalid_percentage", detail = "MpesaPercentage must be between 0 and 100." });
-
-        var mpesaSettings = await settingsService.GetMpesaSettings(storeId);
-        if (request.MpesaPercentage > 0 && mpesaSettings is null)
-        {
-            return BadRequest(new
-            {
-                error = "mpesa_destination_required",
-                message = "Set an M-Pesa payout destination before enabling a split above 0%."
-            });
-        }
-
-        var saved = await settingsService.SaveSplitConfig(storeId, request);
-        if (!saved)
-            return NotFound(new { error = "store_not_found" });
-
-        return Ok();
-    }
+    public IActionResult SaveSplitConfig(string storeId, [FromBody] TandoSplitConfigRequest request) =>
+        StatusCode(410, new { error = TandoSplitService.DisabledError });
 }

@@ -28,25 +28,141 @@ tags:
     description: Secondary/staff account management (Phase 5)
 
 paths:
+  /stores/{storeId}/mpesa/pay:
+    post:
+      summary: Record and initiate a KES collection using a stable store/order reference
+      description: Duplicate identical requests reuse the payment. A successful HTTP response is a workflow record, not proof of settlement.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerPhone, amountKes, orderId]
+              properties:
+                customerPhone: { type: string }
+                amountKes: { type: integer, minimum: 1 }
+                orderId: { type: string, maxLength: 200 }
+      responses:
+        "200": { description: Current persisted collection and disbursement states }
+        "400": { description: Invalid request }
+        "401": { description: Authentication required }
+        "403": { description: Store permission required }
+        "404": { description: Store not found }
+        "409": { description: Order reused with different payment details }
+        "503": { description: Merchant destination missing or provider contract not ready }
+  /stores/{storeId}/mpesa/settings:
+    put:
+      summary: Configure the merchant KES destination
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TandoMpesaSettingsRequest" }
+      responses:
+        "200": { description: Destination saved }
+        "400": { description: Destination required }
+        "404": { description: Store not found }
+  /stores/{storeId}/mpesa/status:
+    get:
+      summary: Read active KES provider readiness
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      responses:
+        "200": { description: Current state or simulated delivery result; HTTP success alone does not mean payment success }
+        "401": { description: Authentication required }
+        "403": { description: Store permission required }
+        "404": { description: Payment not found or mock mode disabled }
+        "409": { description: Conflicting identity, amount, destination, or terminal state }
+  /stores/{storeId}/mpesa/payments/{orderId}:
+    get:
+      summary: Read the durable KES payment record
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Current state or simulated delivery result; HTTP success alone does not mean payment success }
+        "401": { description: Authentication required }
+        "403": { description: Store permission required }
+        "404": { description: Payment not found or mock mode disabled }
+        "409": { description: Conflicting identity, amount, destination, or terminal state }
+  /stores/{storeId}/mpesa/payments/{orderId}/reconcile:
+    post:
+      summary: Reconcile uncertain KES collection and disbursement
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Current state or simulated delivery result; HTTP success alone does not mean payment success }
+        "401": { description: Authentication required }
+        "403": { description: Store permission required }
+        "404": { description: Payment not found or mock mode disabled }
+        "409": { description: Conflicting identity, amount, destination, or terminal state }
+  /stores/{storeId}/mpesa/payments/{orderId}/mock-callback:
+    post:
+      summary: Simulate an authenticated Development-only provider observation
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountKes, destination, collection, disbursement]
+              properties:
+                amountKes: { type: number }
+                destination: { type: string }
+                collection: { type: string, enum: [Unknown, Pending, Succeeded, Failed] }
+                disbursement: { type: string, enum: [Unknown, Pending, Succeeded, Failed] }
+                deliver: { type: boolean, default: true }
+      responses:
+        "200": { description: Current state or simulated delivery result; HTTP success alone does not mean payment success }
+        "401": { description: Authentication required }
+        "403": { description: Store permission required }
+        "404": { description: Payment not found or mock mode disabled }
+        "409": { description: Conflicting identity, amount, destination, or terminal state }
   /verification/status:
     get:
-      summary: Report the active signup phone verification provider
-      description: Mock mode requires explicit configuration and the Development environment.
+      summary: Report the active phone verification provider
+      description: Mock mode requires explicit local configuration and the Development environment.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
       responses:
         "200":
-          description: Active provider mode
+          description: Active provider mode; mock=true means synthetic verification
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  mode: { type: string, enum: [Daraja, Mock] }
-                  mock: { type: boolean }
-  /daraja/status:
-    get:
-      summary: Report Daraja credential configuration
-      responses:
-        "200": { description: Credential presence and environment (secrets are not returned) }
+                  mode:
+                    type: string
+                    enum: [Daraja, Mock]
+                  mock:
+                    type: boolean
+        "401":
+          description: API authentication required
+
   /subscription/status:
     get:
       tags: [Subscription]
@@ -248,40 +364,27 @@ paths:
   /stores/{storeId}/split-config:
     get:
       tags: [Split Payments]
-      summary: Get the store's split percentage config
+      summary: Read the store's historical split configuration
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
       responses:
         "200":
-          description: Current config (MpesaPercentage=0 if never set - no split)
+          description: Historical config; ignored for payment processing
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TandoSplitConfigResponse" }
     put:
+      deprecated: true
       tags: [Split Payments]
-      summary: Set the store's split percentage
-      description: >
-        Flat store-wide percentage (v1) of each sale routed to M-Pesa; the
-        remainder stays BTC. Rejected if MpesaPercentage > 0 and no M-Pesa
-        destination has been set yet via PUT /stores/{storeId}/mpesa.
+      summary: Retired split configuration endpoint
+      description: BTC and KES settle independently. Cross-rail conversion is outside v1.
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/TandoSplitConfigRequest" }
       responses:
-        "200": { description: Saved }
-        "400":
-          description: Invalid percentage, or no M-Pesa destination set yet
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "404":
-          $ref: "#/components/responses/NotFound"
+        "410":
+          description: cross_rail_conversion_not_supported
 
   /stores/{storeId}/invoices/{invoiceId}/split:
     get:
@@ -303,54 +406,29 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
     post:
+      deprecated: true
       tags: [Split Payments]
-      summary: Compute and record the split breakdown for an invoice
-      description: >
-        Idempotent - if a breakdown is already recorded for this invoice, that
-        existing record is returned as-is rather than recomputed, so a later
-        change to the store's split config never retroactively alters a past
-        sale's breakdown. The customer's BTC payment itself is untouched; this
-        only records how it should be divided (manual-confirmation model, no
-        live M-Pesa payout call).
+      summary: Retired split creation endpoint
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
         - $ref: "#/components/parameters/InvoiceId"
       responses:
-        "200":
-          description: Breakdown recorded (or already-existing record returned)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/TandoSplitRecord" }
-        "404":
-          description: Invoice not found for this store
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "410":
+          description: cross_rail_conversion_not_supported
 
   /stores/{storeId}/invoices/{invoiceId}/split/settle:
     put:
+      deprecated: true
       tags: [Split Payments]
-      summary: Mark the M-Pesa leg of a split as manually settled
-      description: >
-        Merchant has paid out the M-Pesa portion themselves (no automated payout
-        call from Tando) and confirms it here. Idempotent once already settled.
+      summary: Retired manual split settlement endpoint
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
         - $ref: "#/components/parameters/InvoiceId"
       responses:
-        "200": { description: Marked settled }
-        "400":
-          description: Split not recorded yet for this invoice
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-        "404":
-          description: Invoice not found for this store
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "410":
+          description: cross_rail_conversion_not_supported
 
   /stores/{storeId}/employees:
     get:
