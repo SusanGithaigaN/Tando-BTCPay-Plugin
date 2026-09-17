@@ -28,6 +28,25 @@ tags:
     description: Secondary/staff account management (Phase 5)
 
 paths:
+  /verification/status:
+    get:
+      summary: Report the active signup phone verification provider
+      description: Mock mode requires explicit configuration and the Development environment.
+      responses:
+        "200":
+          description: Active provider mode
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string, enum: [Daraja, Mock] }
+                  mock: { type: boolean }
+  /daraja/status:
+    get:
+      summary: Report Daraja credential configuration
+      responses:
+        "200": { description: Credential presence and environment (secrets are not returned) }
   /subscription/status:
     get:
       tags: [Subscription]
