@@ -7,7 +7,6 @@
     <PreserveCompilationContext>true</PreserveCompilationContext>
     <RunAnalyzersDuringLiveAnalysis>False</RunAnalyzersDuringLiveAnalysis>
     <RunAnalyzersDuringBuild>False</RunAnalyzersDuringBuild>
-    <UseRazorSourceGenerator>false</UseRazorSourceGenerator>
   </PropertyGroup>
 
    <ItemGroup>
