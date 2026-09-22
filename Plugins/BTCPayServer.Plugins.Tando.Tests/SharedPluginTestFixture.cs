@@ -25,10 +25,6 @@ public class ConfigurablePluginTestFixture : IDisposable
     {
         if (ServerTester == null)
         {
-            // Set fast sweep interval for all tests (1 second)
-            // This is safe because the sweeper only processes enabled configurations
-            Environment.SetEnvironmentVariable("BTCPAY_WALLETSWEEPER_INTERVAL", "1");
-
             var testDir = Path.Combine(Directory.GetCurrentDirectory(), _testDirName);
             ServerTester = testInstance.CreateServerTester(testDir, _useNewDb);
             ServerTester.PayTester.LoadPluginsInDefaultAssemblyContext = true;
@@ -51,7 +47,6 @@ public class PluginTestCollection : ICollectionFixture<SharedPluginTestFixture>
     // ICollectionFixture<> interfaces.
 }
 
-//
 public class StandalonePluginTestFixture : ConfigurablePluginTestFixture
 {
     public StandalonePluginTestFixture() : base("StandalonePluginTests") { }

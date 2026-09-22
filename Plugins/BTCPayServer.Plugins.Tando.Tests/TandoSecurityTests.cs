@@ -2,16 +2,14 @@
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
-using BTCPayServer.Plugins.Subscriptions.Controllers;
+using BTCPayServer.Data;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Tests;
-using BTCPayServer.Views.UIStoreMembership;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Playwright;
 
 namespace BTCPayServer.Plugins.Tando.Tests;
-
 
 [Collection("Plugin Tests")]
 [Trait("Category", "PlaywrightUITest")]
@@ -28,12 +26,6 @@ public class TandoSecurityTests : PlaywrightBaseTest
 
     public ServerTester ServerTester { get; }
 
-    // Creates a real offering + a trial-eligible plan via the actual Subscriptions
-    // Greenfield API (client.CreateOffering / client.CreateOfferingPlan - the same
-    // calls SubscriptionTests.CanUseSubscriptionAPI uses), then points Tando's own
-    // settings at them via TandoSubscriptionService, resolved through
-    // PayTester.GetService<T> rather than an in-process controller call. No browser,
-    // no cheat mode, no manual step - runs cleanly on a fresh DB every session.
     private async Task EnsureTandoSubscriptionConfigured(TestAccount admin)
     {
         var client = await admin.CreateClient();
@@ -66,14 +58,6 @@ public class TandoSecurityTests : PlaywrightBaseTest
         return a;
     }
 
-    // Mints a real API key by calling UIManageController's actual POST AddApiKey
-    // action in-process, then reading it back via the equally real GET APIKeys
-    // action rather than scraping the TempData status message (that message's
-    // storage key/shape isn't shown anywhere in the controller source, so reading
-    // it would just be a different guess). A fresh test account has exactly one
-    // key at the point we read it back, so .Single() is safe here.
-    // storeId == null mints an all-stores (admin) key; a non-null storeId mints
-    // one scoped to only that store.
     private async Task<string> MintApiKey(TestAccount account, string storeId = null)
     {
         var manageController = ServerTester.PayTester.GetController<UIManageController>(
@@ -100,7 +84,10 @@ public class TandoSecurityTests : PlaywrightBaseTest
         var listResult = await manageController.APIKeys();
         var view = Assert.IsType<ViewResult>(listResult);
         var vm = Assert.IsType<UIManageController.ApiKeysViewModel>(view.Model);
-        return vm.ApiKeyDatas.Single(k => k.Label == label).Id;
+        var created = vm.ApiKeyDatas.Single(k => k.Label == label);
+        var savedPermissions = created.GetBlob().Permissions;
+        Console.WriteLine($"[MintApiKey] storeId={storeId ?? "(admin)"} savedPermissions=[{string.Join(", ", savedPermissions)}]");
+        return created.Id;
     }
 
     private async Task<IAPIRequestContext> ApiContextFor(string apiKey)
@@ -131,8 +118,6 @@ public class TandoSecurityTests : PlaywrightBaseTest
         return JsonDocument.Parse(body).RootElement.GetProperty("storeId").GetString();
     }
 
-    // Establishes the baseline: a configured subscription lets signup succeed,
-    // creates a store, and a product added there shows up when listed back.
     [Fact]
     public async Task TandoSignup_ThenAddProduct_RoundTrips()
     {
@@ -156,10 +141,6 @@ public class TandoSecurityTests : PlaywrightBaseTest
         await api.DisposeAsync();
     }
 
-    // Cross-tenant boundary check, same class of bug rockstardev's VendorPaySecurityTests
-    // targets for VendorPay: a caller reaching a store it shouldn't. An admin-wide key
-    // can't expose this (admins bypass per-store checks), so this specifically uses a
-    // key scoped to only store A to confirm it's rejected on store B.
     [Fact]
     public async Task ScopedApiKey_CannotAccessAnotherStoresProducts()
     {
@@ -180,8 +161,7 @@ public class TandoSecurityTests : PlaywrightBaseTest
 
         var otherStore = await scopedApi.GetAsync($"/plugins/api/tando/stores/{storeBId}/products");
         Assert.True(otherStore.Status is 401 or 403,
-            $"Expected 401/403 accessing another store's products with a key scoped to a " +
-            $"different store, got {otherStore.Status}.");
+            $"Expected 401/403 accessing another store's products with a key scoped to a different store, got {otherStore.Status}.");
 
         await adminApi.DisposeAsync();
         await scopedApi.DisposeAsync();
