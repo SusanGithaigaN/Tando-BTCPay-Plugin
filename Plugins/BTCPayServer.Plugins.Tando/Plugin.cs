@@ -7,7 +7,7 @@ using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace BTCPayServer.Plugins.Template;
+namespace BTCPayServer.Plugins.Tando;
 
 public class Plugin : BaseBTCPayServerPlugin
 {
@@ -20,12 +20,13 @@ public class Plugin : BaseBTCPayServerPlugin
     {
         /*services.AddSingleton<IUIExtension>(new UIExtension("TandoPluginHeaderNav", "header-nav"));*/
         services.AddSingleton<IUIExtension>(new UIExtension("TandoServerNav", "server-nav"));
-        services.AddHostedService<TandoPlanFallbackHostedService>();
+        services.AddScoped<TandoSplitService>();
         services.AddSingleton<TandoSubscriptionService>();
         services.AddSingleton<SubscriptionHostedService>();
-        services.AddScoped<TandoProductProvisioningService>();
         services.AddScoped<TandoMerchantSettingsService>();
-        services.AddScoped<TandoSplitService>();
+        services.AddScoped<TandoProductProvisioningService>();
+        services.AddHostedService<TandoPlanFallbackHostedService>();
+        services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {
             Name = "Tando",

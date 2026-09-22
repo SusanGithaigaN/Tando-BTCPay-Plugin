@@ -124,7 +124,7 @@ public class PlaywrightBaseTest : UnitTestBase, IDisposable
         await GoToStore(null, storeNavPage);
     }
 
-    public async Task GoToStore(string storeId, StoreNavPages storeNavPage = StoreNavPages.General)
+    public async Task GoToStore(string? storeId, StoreNavPages storeNavPage = StoreNavPages.General)
     {
         if (storeId is not null)
         {

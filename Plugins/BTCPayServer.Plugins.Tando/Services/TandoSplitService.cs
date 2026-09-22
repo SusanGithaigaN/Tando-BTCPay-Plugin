@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Data.Payouts.LightningLike;
@@ -11,6 +13,9 @@ using BTCPayServer.Services.Stores;
 namespace BTCPayServer.Plugins.Tando.Services;
 
 public enum TandoPullPaymentStatus { NotApplicable, Created, Claimed, Failed }
+
+public enum TandoMpesaPayoutStatus { NotTriggered, Triggered, Confirmed, Failed }
+public record TandoUpdateMpesaPayoutStatusRequest(TandoMpesaPayoutStatus Status, string? PayoutReference, string? Error);
 
 public record TandoSplitRecord
 {
@@ -27,11 +32,15 @@ public record TandoSplitRecord
     public string? PullPaymentId { get; set; }
     public TandoPullPaymentStatus PullPaymentStatus { get; set; } = TandoPullPaymentStatus.NotApplicable;
     public string? PullPaymentError { get; set; }
+    public TandoMpesaPayoutStatus MpesaPayoutStatus { get; set; } = TandoMpesaPayoutStatus.NotTriggered;
+    public string? MpesaPayoutReference { get; set; }
+    public string? MpesaPayoutError { get; set; }
 }
 
 
 public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscriptionService subscriptionService,
-    StoreRepository storeRepository, TandoMerchantSettingsService merchantSettingsService, PullPaymentHostedService pullPaymentHostedService)
+    StoreRepository storeRepository, TandoMerchantSettingsService merchantSettingsService, ITandoMpesaPayoutClient tandoMpesaPayoutClient,
+    PullPaymentHostedService pullPaymentHostedService)
 {
     private const string SplitMetadataKey = "tandoSplit";
 
@@ -67,6 +76,76 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
 
         return (record, null);
     }
+
+    public async Task<TandoSplitRecord?> GetSplit(string storeId, string invoiceId)
+    {
+        var invoice = await invoiceRepository.GetInvoice(invoiceId);
+        if (invoice is null || invoice.StoreId != storeId)
+            return null;
+
+        return GetRecord(invoice);
+    }
+
+    public async Task<(bool Success, string? Error)> MarkMpesaSettled(string storeId, string invoiceId)
+    {
+        var invoice = await invoiceRepository.GetInvoice(invoiceId);
+        if (invoice is null || invoice.StoreId != storeId)
+            return (false, "invoice_not_found");
+
+        var record = GetRecord(invoice);
+        if (record is null)
+            return (false, "split_not_recorded");
+        if (record.MpesaSettled)
+            return (true, null);
+
+        record.MpesaSettled = true;
+        record.MpesaSettledAt = DateTimeOffset.UtcNow;
+        await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
+        return (true, null);
+    }
+
+    // This doesnt necessarily return all splits, but only those that have been recorded in the invoice metadata. This is intentional, as we only want to return splits that have been computed and recorded.
+    public async Task<IReadOnlyList<TandoSplitRecord>> ListSplits(string storeId, int skip, int take)
+    {
+        var invoices = await invoiceRepository.GetInvoices(new InvoiceQuery
+        {
+            StoreId = new[] { storeId },
+            IncludeArchived = false
+        });
+
+        return invoices
+            .Select(GetRecord)
+            .Where(r => r is not null)
+            .Cast<TandoSplitRecord>()
+            .OrderByDescending(r => r.RecordedAt)
+            .Skip(skip)
+            .Take(take)
+            .ToList();
+    }
+
+    public async Task<(bool Success, string? Error)> UpdateMpesaPayoutStatus(
+        string storeId, string invoiceId, TandoMpesaPayoutStatus status, string? payoutReference = null, string? error = null)
+    {
+        var invoice = await invoiceRepository.GetInvoice(invoiceId);
+        if (invoice is null || invoice.StoreId != storeId)
+            return (false, "invoice_not_found");
+
+        var record = GetRecord(invoice);
+        if (record is null)
+            return (false, "split_not_recorded");
+
+        record.MpesaPayoutStatus = status;
+        record.MpesaPayoutReference = payoutReference ?? record.MpesaPayoutReference;
+        record.MpesaPayoutError = error;
+        if (status == TandoMpesaPayoutStatus.Confirmed)
+        {
+            record.MpesaSettled = true;
+            record.MpesaSettledAt = DateTimeOffset.UtcNow;
+        }
+        await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
+        return (true, null);
+    }
+
 
     private async Task<TandoSplitRecord> CreateAndClaimPayout(string storeId, string invoiceId, TandoSplitRecord record)
     {
@@ -119,35 +198,38 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
             record.PullPaymentError = ex.Message;
         }
+        if (record.PullPaymentStatus == TandoPullPaymentStatus.Claimed)
+        {
+            record = await TriggerMpesaPayout(invoiceId, storeId, record);
+        }
         await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
         return record;
     }
 
-    public async Task<TandoSplitRecord?> GetSplit(string storeId, string invoiceId)
+    private async Task<TandoSplitRecord> TriggerMpesaPayout(string invoiceId, string storeId, TandoSplitRecord record)
     {
-        var invoice = await invoiceRepository.GetInvoice(invoiceId);
-        if (invoice is null || invoice.StoreId != storeId)
-            return null;
+        if (record.MpesaDestinationType is null || string.IsNullOrWhiteSpace(record.MpesaDestination))
+        {
+            record.MpesaPayoutStatus = TandoMpesaPayoutStatus.Failed;
+            record.MpesaPayoutError = "no_mpesa_destination_configured";
+            return record;
+        }
+        try
+        {
+            var result = await tandoMpesaPayoutClient.TriggerPayout(new TandoPayoutRequest(
+                invoiceId, storeId, record.MpesaPortionAmount, record.MpesaDestinationType.Value, record.MpesaDestination));
 
-        return GetRecord(invoice);
-    }
+            record.MpesaPayoutStatus = result.Success ? TandoMpesaPayoutStatus.Triggered : TandoMpesaPayoutStatus.Failed;
+            record.MpesaPayoutReference = result.PayoutReference;
+            record.MpesaPayoutError = result.Error;
+        }
+        catch (Exception ex)
+        {
+            record.MpesaPayoutStatus = TandoMpesaPayoutStatus.Failed;
+            record.MpesaPayoutError = ex.Message;
+        }
 
-    public async Task<(bool Success, string? Error)> MarkMpesaSettled(string storeId, string invoiceId)
-    {
-        var invoice = await invoiceRepository.GetInvoice(invoiceId);
-        if (invoice is null || invoice.StoreId != storeId)
-            return (false, "invoice_not_found");
-
-        var record = GetRecord(invoice);
-        if (record is null)
-            return (false, "split_not_recorded");
-        if (record.MpesaSettled)
-            return (true, null);
-
-        record.MpesaSettled = true;
-        record.MpesaSettledAt = DateTimeOffset.UtcNow;
-        await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
-        return (true, null);
+        return record;
     }
 
     private static TandoSplitRecord? GetRecord(InvoiceEntity invoice) => invoice.Metadata?.GetAdditionalData<TandoSplitRecord>(SplitMetadataKey);

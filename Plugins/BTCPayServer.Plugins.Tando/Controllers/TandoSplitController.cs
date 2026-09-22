@@ -22,6 +22,13 @@ public class TandoSplitController(TandoSplitService splitService) : Controller
         return Ok(record);
     }
 
+    [HttpGet("list")]
+    public async Task<IActionResult> List(string storeId, int skip = 0, int take = 50)
+    {
+        var records = await splitService.ListSplits(storeId, skip, take);
+        return Ok(records);
+    }
+
     [HttpPost]
     public async Task<IActionResult> Compute(string storeId, string invoiceId)
     {
@@ -38,6 +45,17 @@ public class TandoSplitController(TandoSplitService splitService) : Controller
         var (success, error) = await splitService.MarkMpesaSettled(storeId, invoiceId);
         if (!success)
             return error == "invoice_not_found" ? NotFound(new { error }) : BadRequest(new { error });
+
+        return Ok();
+    }
+
+    [HttpPut("mpesa-payout-status")]
+    public async Task<IActionResult> UpdateMpesaPayoutStatus(string storeId, string invoiceId,
+    [FromBody] TandoUpdateMpesaPayoutStatusRequest request)
+    {
+        var response = await splitService.UpdateMpesaPayoutStatus(storeId, invoiceId, request.Status, request.PayoutReference, request.Error);
+        if (!response.Success)
+            return response.Error == "invoice_not_found" ? NotFound(new { response.Error }) : BadRequest(new { response.Error });
 
         return Ok();
     }
