@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using BTCPayServer.Plugins.Tando.Services;
 using Microsoft.AspNetCore.Mvc.Rendering;
 
 namespace BTCPayServer.Plugins.Tando.ViewModels;
@@ -26,8 +27,8 @@ public class TandoSettings
 
 public class TandoConnectLightningRequest
 {
-    [Required]
     public string ConnectionString { get; set; }
+    public TandoLightningProvisionRequest LightningProvision { get; set; }
 }
 
 public enum TandoMpesaDestinationType { MobileNumber, TillNumber, PayBill }

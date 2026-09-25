@@ -22,7 +22,7 @@ namespace BTCPayServer.Plugins.MassStoreGenerator;
 [Authorize(Policy = Policies.CanModifyStoreSettingsUnscoped, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 [IgnoreAntiforgeryToken]
 public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService, 
-    TandoProductProvisioningService productProvisioningService) : Controller
+    TandoProductProvisioningService productProvisioningService, TandoLightningProvisionerFactory lightningProvisionerFactor) : Controller
 {
     private const string PreferredRateSource = "bitcoinkenya";
     private const string DefaultCurrency = "KES";
@@ -137,8 +137,27 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
     [HttpPut("stores/{storeId}/lightning/connect")]
     public async Task<IActionResult> ConnectLightning(string storeId, [FromBody] TandoConnectLightningRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request?.ConnectionString))
+        string connectionString;
+        if (!string.IsNullOrWhiteSpace(request?.ConnectionString))
+        {
+            connectionString = request.ConnectionString;
+        }
+        else if (request?.LightningProvision is not null)
+        {
+            var provisioner = lightningProvisionerFactor.Get(request.LightningProvision.ProviderType);
+            if (provisioner is null)
+                return BadRequest(new { error = "unsupported_provider_type" });
+
+            var result = await provisioner.Provision(request.LightningProvision);
+            if (!result.IsSuccess)
+                return BadRequest(new { error = result.Error });
+
+            connectionString = result.ConnectionString!;
+        }
+        else
+        {
             return BadRequest(new { error = "connection_string_required" });
+        }
 
         var callerId = User.GetId();
         var ownedStores = await storeRepository.GetStoresByUserId(callerId);
@@ -148,7 +167,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             return NotFound(new { error = "store_not_found" });
 
         var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId("BTC");
-        var config = new LightningPaymentMethodConfig { ConnectionString = request.ConnectionString };
+        var config = new LightningPaymentMethodConfig { ConnectionString = connectionString };
         store.SetPaymentMethodConfig(paymentMethodId, JToken.FromObject(config));
         var blob = store.GetStoreBlob();
         blob.SetExcluded(paymentMethodId, false);
