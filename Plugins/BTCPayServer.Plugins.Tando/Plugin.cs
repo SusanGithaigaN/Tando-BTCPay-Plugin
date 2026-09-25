@@ -1,10 +1,12 @@
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
+using BTCPayServer.Lightning;
 using BTCPayServer.Models.ServerViewModels;
 using BTCPayServer.Plugins.Subscriptions;
 using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
+using BTCPayServer.Plugins.Tando.Services.Lightning;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BTCPayServer.Plugins.Tando;
@@ -26,7 +28,11 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddScoped<TandoMerchantSettingsService>();
         services.AddScoped<TandoProductProvisioningService>();
         services.AddHostedService<TandoPlanFallbackHostedService>();
+        services.AddSingleton<TandoLightningProvisionerFactory>();
+        services.AddSingleton<ITandoLightningProvisioner, NwcLightningProvisioner>();
+        services.AddSingleton<ITandoLightningProvisioner, PhoenixdLightningProvisioner>();
         services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
+        services.AddSingleton<ILightningConnectionStringHandler, NwcLightningConnectionStringHandler>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {
             Name = "Tando",
