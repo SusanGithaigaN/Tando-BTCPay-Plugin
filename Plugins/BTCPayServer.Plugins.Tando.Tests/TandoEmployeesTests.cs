@@ -5,6 +5,7 @@ using BTCPayServer.Controllers;
 using BTCPayServer.Plugins.Tando.Helper;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
+using BTCPayServer.Services.Stores;
 using BTCPayServer.Tests;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Playwright;
@@ -246,5 +247,30 @@ public class TandoEmployeesTests : PlaywrightBaseTest
         Assert.Equal(400, revoke.Status);
         var body = await ParseJson(revoke);
         Assert.Equal("cannot_remove_last_owner_or_user_not_found", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Revoke_Owner_IsRefused()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var adminKey = await MintApiKey(admin);
+        var api = await ApiContextFor(adminKey);
+        var (storeId, merchantApi) = await SignupMerchant(api);
+
+        // Second owner, so BTCPay's last-owner guard can't be what blocks removal.
+        var coOwner = ServerTester.NewAccount();
+        await coOwner.GrantAccessAsync();
+        var storeRepository = ServerTester.PayTester.GetService<StoreRepository>();
+        await storeRepository.AddOrUpdateStoreUser(storeId, coOwner.UserId, StoreRoleId.Owner);
+
+        var revoke = await merchantApi.DeleteAsync($"/plugins/api/tando/stores/{storeId}/employees/{coOwner.UserId}");
+        Assert.Equal(400, revoke.Status);
+        var body = await ParseJson(revoke);
+        Assert.Equal("cannot_remove_last_owner_or_user_not_found", body.GetProperty("error").GetString());
+
+        var owners = await storeRepository.GetStoreUsers(storeId, new[] { StoreRoleId.Owner });
+        Assert.Contains(owners, u => u.Id == coOwner.UserId);
     }
 }
