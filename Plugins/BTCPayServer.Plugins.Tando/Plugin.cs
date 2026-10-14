@@ -22,6 +22,7 @@ public class Plugin : BaseBTCPayServerPlugin
         /*services.AddSingleton<IUIExtension>(new UIExtension("TandoPluginHeaderNav", "header-nav"));*/
         services.AddSingleton<IUIExtension>(new UIExtension("TandoServerNav", "server-nav"));
         services.AddScoped<TandoSplitService>();
+        services.AddScoped<TandoWalletService>();
         services.AddSingleton<TandoSubscriptionService>();
         services.AddScoped<TandoMerchantAccountService>();
         services.AddScoped<TandoMerchantSettingsService>();
