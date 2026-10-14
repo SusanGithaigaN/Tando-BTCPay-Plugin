@@ -1,45 +1,37 @@
 using System;
 using System.Linq;
-using BTCPayServer.Plugins.Tando.Helper;
 using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
-using BTCPayServer.Payments;
-using BTCPayServer.Payments.Lightning;
+using BTCPayServer.Plugins.Tando.Helper;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Stores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Newtonsoft.Json.Linq;
 
-namespace BTCPayServer.Plugins.MassStoreGenerator;
+namespace BTCPayServer.Plugins.Tando;
 
 [Route("~/plugins/api/tando/")]
-[Authorize(
-    Policy = Policies.CanModifyStoreSettingsUnscoped,
-    AuthenticationSchemes = AuthenticationSchemes.Greenfield
-)]
+[Authorize(Policy = Policies.CanModifyServerSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 [IgnoreAntiforgeryToken]
-public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService,
-    TandoProductProvisioningService productProvisioningService, TandoLightningProvisionerFactory lightningProvisionerFactor,
-    PhoneVerificationService phoneVerification) : Controller
+public class TandoOnboardingController(StoreRepository storeRepository, TandoSubscriptionService subscriptionService, 
+    TandoProductProvisioningService productProvisioningService, TandoMerchantAccountService accountService) : Controller
 {
     private const string PreferredRateSource = "bitcoinkenya";
     private const string DefaultCurrency = "KES";
     private const string PhoneMetadataKey = "tandoPhoneNumber";
     private const string PlanMetadataKey = "tandoSubscriptionPlanId";
 
-
     [HttpGet("subscription/status")]
     public async Task<IActionResult> SubscriptionStatus([FromQuery] string phoneNumber)
     {
         var normalizedPhone = KenyanPhoneNumber.Normalize(phoneNumber);
         if (normalizedPhone == null)
-            return BadRequest(new { error = "invalid_phone_number", detail = "Expected a Safaricom MSISDN, e.g. 0712345678 or +254712345678." });
+            return BadRequest(new { error = "invalid_phone_number", detail = "Expected a Kenyan MSISDN, e.g. 0712345678 or +254712345678." });
 
         var status = await subscriptionService.GetStatus(normalizedPhone);
         return Ok(status);
@@ -55,18 +47,6 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         return Ok(new { configured = true, plans });
     }
 
-    [HttpGet("verification/status")]
-    public async Task<IActionResult> VerificationStatus()
-    {
-        var verifier = phoneVerification.Active;
-        return Ok(new
-        {
-            enabled = verifier is not null,
-            mode = verifier?.Name,
-            configured = verifier is not null && await verifier.IsConfigured()
-        });
-    }
-
     [HttpPost("signup")]
     public async Task<IActionResult> Signup([FromBody] TandoSignupRequest request, CancellationToken cancellationToken)
     {
@@ -77,11 +57,6 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         if (normalizedPhone is null)
             return BadRequest(new { error = "invalid_phone_number", detail = "Expected a Kenyan MSISDN, e.g. 0712345678 or +254712345678." });
 
-        var verification = await phoneVerification.Verify(normalizedPhone, request.IdType, request.IdNumber, cancellationToken);
-        if (VerificationError(verification) is { } verificationError)
-            return verificationError;
-
-        var phoneNumberVerified = verification == PhoneVerificationOutcome.Verified;
         var status = await subscriptionService.GetStatus(normalizedPhone);
         if (!status.Configured)
         {
@@ -105,9 +80,13 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             if (!status.Active)
                 return StatusCode(500, new { error = "subscriber_creation_failed" });
         }
-        var callerId = User.GetId();
-        var userStore = await storeRepository.GetStoresByUserId(callerId);
-        var existingStore = userStore.FirstOrDefault(s => s.StoreName == normalizedPhone);
+        var (merchant, _, errors) = await accountService.GetOrCreateUser(normalizedPhone);
+        if (merchant is null)
+            return BadRequest(new { error = "merchant_user_creation_failed", detail = errors });
+
+        var existingStore = await FindOwnedStore(merchant.Id, normalizedPhone);
+
+
         if (existingStore is not null)
         {
             await RefreshPlanMetadata(existingStore, status.PlanId);
@@ -119,7 +98,8 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
                 AlreadyExisted = true,
                 PosAppId = posAppId,
                 CartAppId = cartAppId,
-                PhoneNumberVerified = phoneNumberVerified
+                UserId = merchant.Id,
+                ApiKey = await accountService.CreateAppKey(merchant.Id, request.DeviceName),
             });
         }
         var store = await storeRepository.GetDefaultStoreTemplate();
@@ -132,7 +112,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
         blob.AdditionalData[PhoneMetadataKey] = normalizedPhone;
         blob.AdditionalData[PlanMetadataKey] = status.PlanId;
         store.SetStoreBlob(blob);
-        var result = await storeRepository.CreateStore(callerId, store);
+        var result = await storeRepository.CreateStore(merchant.Id, store);
         if (result != StoreRepository.CreateStoreResult.Created)
             return BadRequest(new { error = "store_creation_failed", detail = result.ToString() });
 
@@ -144,67 +124,52 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             AlreadyExisted = false,
             PosAppId = newPosAppId,
             CartAppId = newCartAppId,
-            PhoneNumberVerified = phoneNumberVerified
+            UserId = merchant.Id,
+            ApiKey = await accountService.CreateAppKey(merchant.Id, request.DeviceName)
         });
     }
 
-
-    [HttpPut("stores/{storeId}/lightning/connect")]
-    public async Task<IActionResult> ConnectLightning(string storeId, [FromBody] TandoConnectLightningRequest request)
+    [HttpPost("users/api-keys")]
+    public async Task<IActionResult> IssueAppKey([FromBody] TandoIssueAppKeyRequest request)
     {
-        string connectionString;
-        if (!string.IsNullOrWhiteSpace(request?.ConnectionString))
+        var normalizedPhone = KenyanPhoneNumber.Normalize(request?.PhoneNumber);
+        if (normalizedPhone is null)
+            return BadRequest(new { error = "invalid_phone_number", detail = $"Expected a Kenyan MSISDN, e.g. {KenyanPhoneNumber.ExampleFormat}." });
+
+        var user = await accountService.FindUser(normalizedPhone);
+        var stores = user is null ? Array.Empty<StoreData>() : await storeRepository.GetStoresByUserId(user.Id);
+        if (user is null || stores.Length == 0)
+            return NotFound(new { error = "no_store_access" });
+
+        return Ok(new TandoIssueAppKeyResponse
         {
-            connectionString = request.ConnectionString;
-        }
-        else if (request?.LightningProvision is not null)
-        {
-            var provisioner = lightningProvisionerFactor.Get(request.LightningProvision.ProviderType);
-            if (provisioner is null)
-                return BadRequest(new { error = "unsupported_provider_type" });
-
-            var result = await provisioner.Provision(request.LightningProvision);
-            if (!result.IsSuccess)
-                return BadRequest(new { error = result.Error });
-
-            connectionString = result.ConnectionString!;
-        }
-        else
-        {
-            return BadRequest(new { error = "connection_string_required" });
-        }
-
-        var callerId = User.GetId();
-        var ownedStores = await storeRepository.GetStoresByUserId(callerId);
-        // 404, not 403: don't reveal to a non-owner whether storeId exists at all.
-        var store = ownedStores.FirstOrDefault(s => s.Id == storeId);
-        if (store is null)
-            return NotFound(new { error = "store_not_found" });
-
-        var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId("BTC");
-        var config = new LightningPaymentMethodConfig { ConnectionString = connectionString };
-        store.SetPaymentMethodConfig(paymentMethodId, JToken.FromObject(config));
-        var blob = store.GetStoreBlob();
-        blob.SetExcluded(paymentMethodId, false);
-        store.SetStoreBlob(blob);
-        await storeRepository.UpdateStore(store);
-        return Ok(new { storeId, paymentMethodId = paymentMethodId.ToString() });
+            UserId = user.Id,
+            PhoneNumber = normalizedPhone,
+            ApiKey = await accountService.CreateAppKey(user.Id, request!.DeviceName),
+            Stores = stores.Select(s => new TandoStoreAccess
+            {
+                StoreId = s.Id,
+                StoreName = s.StoreName,
+                Role = s.GetStoreRoleOfUser(user.Id)?.Role
+            }).ToArray()
+        });
     }
 
-    private IActionResult? VerificationError(PhoneVerificationOutcome outcome) => outcome switch
+    private async Task<StoreData?> FindOwnedStore(string merchantId, string normalizedPhone)
     {
-        PhoneVerificationOutcome.Skipped or PhoneVerificationOutcome.Verified => null,
-        PhoneVerificationOutcome.IdNumberRequired => BadRequest(new { error = "id_number_required", detail = "An ID number is required to verify the phone number." }),
-        PhoneVerificationOutcome.InvalidIdType => BadRequest(new { error = "invalid_id_type", detail = "Expected 01 (National ID), 02 (Military ID) or 05 (Passport)." }),
-        PhoneVerificationOutcome.Mismatch => BadRequest(new { error = "phone_id_mismatch", detail = "The phone number is not registered under this ID." }),
-        PhoneVerificationOutcome.NotConfigured => StatusCode(503, new { error = "phone_verification_not_configured", message = "Phone verification isn't set up yet. Please contact the Tando team." }),
-        _ => StatusCode(503, new { error = "phone_verification_unavailable", message = "Couldn't verify the phone number right now. Please try again later." })
-    };
+        var stores = await storeRepository.GetStoresByUserId(merchantId);
+        return stores.FirstOrDefault(s =>
+            s.GetStoreRoleOfUser(merchantId)?.Role == StoreRoleId.Owner.Role &&
+            s.GetStoreBlob().AdditionalData.TryGetValue(PhoneMetadataKey, out var phone) &&
+            phone?.ToString() == normalizedPhone);
+    }
+
+
 
     private async Task RefreshPlanMetadata(StoreData store, string? currentPlanId)
     {
         var blob = store.GetStoreBlob();
-        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId) return;
+        if (blob.AdditionalData[PlanMetadataKey]?.ToString() == currentPlanId) return; 
 
         blob.AdditionalData[PlanMetadataKey] = currentPlanId;
         store.SetStoreBlob(blob);
