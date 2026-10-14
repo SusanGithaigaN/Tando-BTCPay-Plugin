@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
@@ -273,4 +273,55 @@ public class TandoEmployeesTests : PlaywrightBaseTest
         var owners = await storeRepository.GetStoreUsers(storeId, new[] { StoreRoleId.Owner });
         Assert.Contains(owners, u => u.Id == coOwner.UserId);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Revoke_AppKeyIsRemovedOnlyAfterFinalMembership(bool hasOtherMembership)
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(backendApi);
+        var phone = RandomKenyanPhone();
+        var invite = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, invite.Status);
+        var userId = (await ParseJson(invite)).GetProperty("userId").GetString();
+        string? otherStoreId = null;
+        if (hasOtherMembership)
+        {
+            var (otherId, otherApi) = await SignupMerchant(backendApi);
+            otherStoreId = otherId;
+            var otherInvite = await otherApi.PostAsync($"/plugins/api/tando/stores/{otherId}/employees",
+                new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+            Assert.Equal(200, otherInvite.Status);
+        }
+        var issue = await backendApi.PostAsync("/plugins/api/tando/users/api-keys",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, issue.Status);
+        var keyId = (await ParseJson(issue)).GetProperty("apiKey").GetString();
+        var employeeApi = await ApiContextFor(keyId!);
+        var profile = await employeeApi.GetAsync("/api/v1/users/me");
+        Assert.Equal(200, profile.Status);
+        var keys = ServerTester.PayTester.GetService<BTCPayServer.Security.Greenfield.APIKeyRepository>();
+        Assert.NotNull(await keys.GetKey(keyId!));
+
+        var revoke = await merchantApi.DeleteAsync($"/plugins/api/tando/stores/{storeId}/employees/{userId}");
+        Assert.Equal(200, revoke.Status);
+        var remainingKey = await keys.GetKey(keyId!);
+        if (hasOtherMembership)
+        {
+            Assert.NotNull(remainingKey);
+            var store = await employeeApi.GetAsync($"/api/v1/stores/{otherStoreId}/pull-payments");
+            Assert.Equal(200, store.Status);
+        }
+        else
+        {
+            Assert.Null(remainingKey);
+            var revokedProfile = await employeeApi.GetAsync("/api/v1/users/me");
+            Assert.Equal(401, revokedProfile.Status);
+        }
+    }
+
 }
