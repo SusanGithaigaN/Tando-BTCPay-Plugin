@@ -1,7 +1,8 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
+using BTCPayServer.Data;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Stores;
@@ -343,4 +344,87 @@ public class TandoOnboardingTests : PlaywrightBaseTest
             new APIRequestContextOptions { DataObject = new { phoneNumber = RandomKenyanPhone() } });
         Assert.Equal(404, issue.Status);
     }
+    [Theory]
+    [InlineData("signup")]
+    [InlineData("users/api-keys")]
+    public async Task Onboarding_WithMalformedPhone_ReturnsInvalidPhone(string endpoint)
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var response = await api.PostAsync($"/plugins/api/tando/{endpoint}",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = "+255712345678" } });
+        Assert.Equal(400, response.Status);
+        Assert.Equal("invalid_phone_number", (await ParseJson(response)).GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task IssueAppKey_MerchantKey_IsForbidden()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var phone = RandomKenyanPhone();
+        var (_, merchantApi) = await SignupMerchant(backendApi, phone);
+        var response = await merchantApi.PostAsync("/plugins/api/tando/users/api-keys",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(403, response.Status);
+    }
+
+    [Theory]
+    [InlineData(" till-1 ", "tando-app:till-1")]
+    [InlineData(null, "tando-app:device")]
+    [InlineData("", "tando-app:device")]
+    [InlineData(" ", "tando-app:device")]
+    public async Task IssueAppKey_PersistsDeviceLabel(string? deviceName, string expectedLabel)
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var phone = RandomKenyanPhone();
+        await SignupMerchant(api, phone);
+        var response = await api.PostAsync("/plugins/api/tando/users/api-keys",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone, deviceName } });
+        Assert.Equal(200, response.Status);
+        var keyId = (await ParseJson(response)).GetProperty("apiKey").GetString();
+        var key = await ServerTester.PayTester.GetService<BTCPayServer.Security.Greenfield.APIKeyRepository>().GetKey(keyId!);
+        Assert.NotNull(key);
+        Assert.Equal(expectedLabel, key.Label);
+    }
+
+    [Fact]
+    public async Task Signup_DoesNotReuseEmployeeOnlyStoreWithMatchingPhone()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var (employeeStoreId, ownerApi) = await SignupMerchant(backendApi);
+        var phone = RandomKenyanPhone();
+        var invite = await ownerApi.PostAsync($"/plugins/api/tando/stores/{employeeStoreId}/employees",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, invite.Status);
+        var userId = (await ParseJson(invite)).GetProperty("userId").GetString();
+        var repository = ServerTester.PayTester.GetService<StoreRepository>();
+        var store = await repository.FindStore(employeeStoreId);
+        var blob = store.GetStoreBlob();
+        blob.AdditionalData["tandoPhoneNumber"] = BTCPayServer.Plugins.Tando.Helper.KenyanPhoneNumber.Normalize(phone);
+        store.SetStoreBlob(blob);
+        await repository.UpdateStore(store);
+
+        var signup = await backendApi.PostAsync("/plugins/api/tando/signup",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, signup.Status);
+        var body = await ParseJson(signup);
+        Assert.False(body.GetProperty("alreadyExisted").GetBoolean());
+        var newStoreId = body.GetProperty("storeId").GetString();
+        Assert.NotEqual(employeeStoreId, newStoreId);
+        var owned = await repository.GetStoreUsers(newStoreId!, new[] { StoreRoleId.Owner });
+        Assert.Contains(owned, u => u.Id == userId);
+        var employees = await repository.GetStoreUsers(employeeStoreId, new[] { StoreRoleId.Employee });
+        Assert.Contains(employees, u => u.Id == userId);
+    }
+
 }

@@ -1,7 +1,8 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
+using BTCPayServer.Data;
 using BTCPayServer.Events;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
@@ -372,6 +373,117 @@ public class TandoSplitTests : PlaywrightBaseTest
         Assert.Equal(400, compute.Status);
         Assert.Equal("treasury_not_configured", (await ParseJson(compute)).GetProperty("error").GetString());
         Assert.Empty(await MerchantClient(storeId).GetPullPayments(storeId));
+    }
+
+    // Pay with splitting disabled so the automatic event handler cannot create a
+    // record before the test sets its percentage and payout limit.
+    private async Task<string> CreateInvoiceWithPayment(TestAccount admin, string storeId, decimal paymentFactor)
+    {
+        var invoiceId = await CreateInvoice(admin, storeId, 1000m);
+        var client = MerchantClient(storeId);
+        var method = (await client.GetInvoicePaymentMethods(invoiceId)).First(m => m.PaymentMethodId == "BTC-CHAIN");
+        await ServerTester.ExplorerNode.SendToAddressAsync(
+            BitcoinAddress.Create(method.Destination, ServerTester.NetworkProvider.BTC.NBitcoinNetwork),
+            Money.Coins(method.Due * paymentFactor));
+        await ServerTester.ExplorerNode.GenerateAsync(1);
+        var repository = ServerTester.PayTester.GetService<InvoiceRepository>();
+        await TestUtils.EventuallyAsync(async () =>
+        {
+            var invoice = await repository.GetInvoice(invoiceId);
+            Assert.True(invoice.PaidAmount?.Net > 0m);
+            Assert.Contains(invoice.GetPayments(false), p => p.Status == PaymentStatus.Settled);
+        });
+        if (paymentFactor < 1m)
+            await client.MarkInvoiceStatus(invoiceId, new MarkInvoiceStatusRequest { Status = InvoiceStatus.Settled });
+        await TestUtils.EventuallyAsync(async () =>
+            Assert.Equal(InvoiceStatus.Settled, (await client.GetInvoice(invoiceId)).Status));
+        return invoiceId;
+    }
+
+    [Theory]
+    [InlineData(0.5, 150, 850)]
+    [InlineData(1.0, 300, 700)]
+    [InlineData(1.5, 300, 700)]
+    public async Task ComputeSplit_UsesPaidAmountCappedAtInvoicePrice(double factor, int expectedMpesa, int expectedBtc)
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(backendApi);
+        var invoiceId = await CreateInvoiceWithPayment(admin, storeId, (decimal)factor);
+        await EnableSplit(merchantApi, storeId, 30m);
+        // Avoid external treasury resolution: this test checks payment accounting.
+        var service = ServerTester.PayTester.GetService<TandoSubscriptionService>();
+        var settings = await service.GetSettings();
+        settings.MaxPayoutAmount = 1m;
+        await service.SaveSettings(settings);
+        var response = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/invoices/{invoiceId}/split");
+        Assert.Equal(200, response.Status);
+        var record = await ParseJson(response);
+        Assert.Equal(1000m * (decimal)factor, record.GetProperty("paidAmount").GetDecimal());
+        Assert.Equal((decimal)expectedMpesa, record.GetProperty("mpesaPortionAmount").GetDecimal());
+        Assert.Equal((decimal)expectedBtc, record.GetProperty("btcPortionAmount").GetDecimal());
+        Assert.Equal("payout_limit_exceeded", record.GetProperty("pullPaymentError").GetString());
+        Assert.Empty(await MerchantClient(storeId).GetPullPayments(storeId));
+    }
+
+    [Theory]
+    [InlineData(299, true)]
+    [InlineData(300, false)]
+    [InlineData(301, false)]
+    public async Task ComputeSplit_EnforcesPayoutLimitOnlyAboveBoundary(int limit, bool blocked)
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(backendApi);
+        var invoiceId = await CreateInvoiceWithPayment(admin, storeId, 1m);
+        await EnableSplit(merchantApi, storeId, 30m);
+        var service = ServerTester.PayTester.GetService<TandoSubscriptionService>();
+        var settings = await service.GetSettings();
+        settings.MaxPayoutAmount = limit;
+        await service.SaveSettings(settings);
+        var response = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/invoices/{invoiceId}/split");
+        Assert.Equal(200, response.Status);
+        var record = await ParseJson(response);
+        var payments = await MerchantClient(storeId).GetPullPayments(storeId);
+        if (blocked)
+        {
+            Assert.Equal("Failed", record.GetProperty("pullPaymentStatus").GetString());
+            Assert.Equal("payout_limit_exceeded", record.GetProperty("pullPaymentError").GetString());
+            Assert.Empty(payments);
+        }
+        else
+        {
+            Assert.NotEqual("payout_limit_exceeded", record.GetProperty("pullPaymentError").GetString());
+            var payment = Assert.Single(payments);
+            Assert.Equal(300m, payment.Amount);
+        }
+    }
+
+    [Fact]
+    public async Task ComputeSplit_ConcurrentRequests_CreateOnePullPayment()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var backendApi = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(backendApi);
+        var invoiceId = await CreateInvoiceWithPayment(admin, storeId, 1m);
+        await EnableSplit(merchantApi, storeId, 30m);
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ =>
+            merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/invoices/{invoiceId}/split")));
+        var records = new List<JsonElement>();
+        foreach (var response in responses)
+        {
+            Assert.Equal(200, response.Status);
+            records.Add(await ParseJson(response));
+        }
+        Assert.Single(records.Select(r => r.GetProperty("recordedAt").GetDateTimeOffset()).Distinct());
+        Assert.All(records, r => Assert.Equal(300m, r.GetProperty("mpesaPortionAmount").GetDecimal()));
+        Assert.Single(await MerchantClient(storeId).GetPullPayments(storeId));
     }
 
     private readonly HashSet<string> _storesWithWallet = new();
