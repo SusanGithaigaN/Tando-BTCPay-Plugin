@@ -488,6 +488,8 @@ paths:
         merchant signup) if one doesn't already exist, then grants BTCPay's native
         Employee store role - POS/invoice access, no store settings or wallet
         access. The employee then gets their own key from `/users/api-keys`.
+        If the phone belongs to someone who already holds another role on this
+        store (owner, manager or guest), their role is left unchanged.
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
@@ -504,6 +506,11 @@ paths:
               schema: { $ref: "#/components/schemas/TandoEmployeeResponse" }
         "400":
           $ref: "#/components/responses/BadRequest"
+        "409":
+          description: "`user_has_other_store_role`: the phone belongs to an owner, manager or guest of this store; their role is left unchanged"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /stores/{storeId}/employees/{userId}:
     delete:
