@@ -89,6 +89,30 @@
                     </div>
                 </div>
 
+                <h4 class="mt-5 mb-3" text-translate="true">M-Pesa payouts</h4>
+                @if (string.IsNullOrWhiteSpace(Model.MpesaPayoutApiUrl) || !Model.HasMpesaPayoutApiKey)
+                {
+                    <div class="alert alert-warning" role="alert" text-translate="true">
+                        No payout provider is set. Splits are recorded and sent to the treasury, but merchants are not paid in KES automatically.
+                    </div>
+                }
+                <div class="form-group mb-3">
+                    <label asp-for="MpesaPayoutApiUrl" class="form-label" text-translate="true">Payout endpoint URL</label>
+                    <input asp-for="MpesaPayoutApiUrl" class="form-control" placeholder="https://psp.example.com/payouts" />
+                    <span asp-validation-for="MpesaPayoutApiUrl" class="text-danger"></span>
+                </div>
+                <div class="form-group mb-3">
+                    <label asp-for="MpesaPayoutApiKey" class="form-label" text-translate="true">API key</label>
+                    <input asp-for="MpesaPayoutApiKey" type="password" autocomplete="new-password" value="" class="form-control"
+                           placeholder="@(Model.HasMpesaPayoutApiKey ? "Saved. Leave empty to keep it" : "")" />
+                </div>
+                <div class="form-group mb-3">
+                    <label asp-for="MpesaCallbackSecret" class="form-label" text-translate="true">Callback secret</label>
+                    <input asp-for="MpesaCallbackSecret" type="password" autocomplete="new-password" value="" class="form-control"
+                           placeholder="@(Model.HasMpesaCallbackSecret ? "Saved. Leave empty to keep it" : "")" />
+                    <div class="form-text" text-translate="true">Used to check that payout callbacks really come from the provider.</div>
+                </div>
+
                 <button id="page-primary" type="submit" class="btn btn-primary" text-translate="true">Save</button>
             </form>
         }

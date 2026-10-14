@@ -15,6 +15,11 @@ public class TandoSettingsViewModel
     public string? FallbackSubscriptionPlanId { get; set; }
     public string? TreasuryLightningAddress { get; set; }
     public decimal? MaxPayoutAmount { get; set; }
+    public string? MpesaPayoutApiUrl { get; set; }
+    public string? MpesaPayoutApiKey { get; set; }
+    public string? MpesaCallbackSecret { get; set; }
+    public bool HasMpesaPayoutApiKey { get; set; }
+    public bool HasMpesaCallbackSecret { get; set; }
     public List<SelectListItem> Offerings { get; set; } = new();
     public List<SelectListItem> Plans { get; set; } = new();
     public string? CreateOfferingUrl { get; set; }
@@ -28,6 +33,10 @@ public class TandoSettings
     public string? TreasuryLightningAddress { get; set; }
     public decimal? MaxPayoutAmount { get; set; }
     public bool IsTreasuryConfigured => !string.IsNullOrWhiteSpace(TreasuryLightningAddress);
+    public string? MpesaPayoutApiUrl { get; set; }
+    public string? MpesaPayoutApiKey { get; set; }
+    public string? MpesaCallbackSecret { get; set; }
+    public bool IsMpesaPayoutConfigured => !string.IsNullOrWhiteSpace(MpesaPayoutApiUrl) && !string.IsNullOrWhiteSpace(MpesaPayoutApiKey);
 }
 
 public class TandoConnectLightningRequest
