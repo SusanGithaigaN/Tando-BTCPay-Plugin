@@ -3,12 +3,13 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace BTCPayServer.Plugins.Tando.Services;
 
-public class TandoPlanFallbackHostedService(TandoSubscriptionService subscriptionService) : BackgroundService
+public class TandoPlanFallbackHostedService(TandoSubscriptionService subscriptionService, ILogger<TandoPlanFallbackHostedService> logger) : BackgroundService
 {
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15);
+    protected virtual TimeSpan CheckInterval => TimeSpan.FromMinutes(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -17,13 +18,24 @@ public class TandoPlanFallbackHostedService(TandoSubscriptionService subscriptio
             try
             {
                 await CheckAndSwapIfNeeded();
+            }
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
+            {
+                logger.LogError(ex, "Tando fallback plan check failed, retrying in {CheckInterval}", CheckInterval);
+            }
+
+            try
+            {
                 await Task.Delay(CheckInterval, stoppingToken);
             }
-            catch { }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 
-    private async Task CheckAndSwapIfNeeded()
+    protected virtual async Task CheckAndSwapIfNeeded()
     {
         var settings = await subscriptionService.GetSettings();
         if (string.IsNullOrEmpty(settings.SubscriptionOfferingId) || string.IsNullOrEmpty(settings.SubscriptionPlanId))
