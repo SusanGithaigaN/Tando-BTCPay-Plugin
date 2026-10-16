@@ -8,18 +8,22 @@ using BTCPayServer.Data;
 using BTCPayServer.Data.Subscriptions;
 using BTCPayServer.Plugins.Subscriptions;
 using BTCPayServer.Plugins.Tando.ViewModels;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer.Plugins.Tando.Services;
 
 public record TandoPlan(string Id, string Name, decimal Price, string Currency, string RecurringType, string? Description);
+public record TandoSubscriptionStatus(bool Active, bool Configured, string? PlanId, string? Phase, 
+    DateTimeOffset? NextPaymentDue = null, bool Suspended = false);
 
-public record TandoSubscriptionStatus(bool Active, bool Configured, string? PlanId, string? Phase);
+public record TandoPaymentLink(string Url, DateTimeOffset ExpiresAt);
 
 public record ExistingOffering(string Id, string Name, string StoreId, string StoreName);
 
-public class TandoSubscriptionService(ApplicationDbContextFactory dbContextFactory, ISettingsRepository settingsRepository, SubscriptionHostedService subscriptionHostedService)
+public class TandoSubscriptionService(ApplicationDbContextFactory dbContextFactory, ISettingsRepository settingsRepository, 
+    SubscriptionHostedService subscriptionHostedService, LinkGenerator linkGenerator)
 {
     public async Task<TandoSettings> GetSettings() => await settingsRepository.GetSettingAsync<TandoSettings>("Tando") ?? new TandoSettings();
 
@@ -71,7 +75,9 @@ public class TandoSubscriptionService(ApplicationDbContextFactory dbContextFacto
             Active: subscriber is { IsActive: true, IsSuspended: false },
             Configured: true,
             PlanId: subscriber.PlanId,
-            Phase: subscriber.Phase.ToString());
+            Phase: subscriber.Phase.ToString(),
+            NextPaymentDue: subscriber.NextPaymentDue,
+            Suspended: subscriber.IsSuspended);
     }
 
     public async Task<TandoSubscriptionStatus> CreateFreeTrialSubscriber(string normalizedPhone, RequestBaseUrl baseUrl, CancellationToken cancellationToken)
@@ -127,5 +133,27 @@ public class TandoSubscriptionService(ApplicationDbContextFactory dbContextFacto
             }
         }
         return await GetStatus(normalizedPhone);
+    }
+
+    public async Task<TandoPaymentLink?> CreatePaymentLink(string normalizedPhone, RequestBaseUrl baseUrl)
+    {
+        var offeringId = (await GetSettings()).SubscriptionOfferingId;
+        if (string.IsNullOrEmpty(offeringId))
+            return null;
+
+        await using var ctx = dbContextFactory.CreateContext();
+        var subscriber = await ctx.Subscribers.GetBySelector(offeringId, CustomerSelector.ByExternalRef(normalizedPhone));
+        if (subscriber is null)
+            return null;
+
+        var session = new PortalSessionData
+        {
+            SubscriberId = subscriber.Id,
+            BaseUrl = baseUrl,
+            Expiration = DateTimeOffset.UtcNow.AddHours(1)
+        };
+        ctx.PortalSessions.Add(session);
+        await ctx.SaveChangesAsync();
+        return new TandoPaymentLink(linkGenerator.SubscriberPortalLink(session.Id, baseUrl), session.Expiration);
     }
 }

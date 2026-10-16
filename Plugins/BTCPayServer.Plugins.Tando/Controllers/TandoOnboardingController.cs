@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using BTCPayServer.Abstractions;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
@@ -66,7 +68,7 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
                 message = "Subscriptions aren't set up yet. Please contact the Tando team before trying to sign up."
             });
         }
-        if (!status.Active)
+        if (status.Phase is null)
         {
             try
             {
@@ -127,6 +129,57 @@ public class TandoOnboardingController(StoreRepository storeRepository, TandoSub
             UserId = merchant.Id,
             ApiKey = await accountService.CreateAppKey(merchant.Id, request.DeviceName)
         });
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] TandoLoginRequest request)
+    {
+        var normalizedPhone = KenyanPhoneNumber.Normalize(request?.PhoneNumber);
+        if (normalizedPhone is null)
+            return BadRequest(new { error = "invalid_phone_number", detail = $"Expected a Kenyan MSISDN, e.g. {KenyanPhoneNumber.ExampleFormat}." });
+
+        var user = await accountService.FindUser(normalizedPhone);
+        var stores = user is null ? Array.Empty<StoreData>() : await storeRepository.GetStoresByUserId(user.Id);
+        if (user is null || stores.Length == 0)
+            return NotFound(new { error = "merchant_not_found" });
+
+        var baseUrl = Request.GetRequestBaseUrl();
+        var result = new List<TandoLoginStore>();
+        foreach (var store in stores)
+        {
+            var role = store.GetStoreRoleOfUser(user.Id)?.Role;
+            var isOwner = role == StoreRoleId.Owner.Role;
+            var ownerPhone = store.GetStoreBlob().AdditionalData.TryGetValue(PhoneMetadataKey, out var phone) ? phone?.ToString() : null;
+            result.Add(new TandoLoginStore
+            {
+                StoreId = store.Id,
+                StoreName = store.StoreName,
+                Role = role,
+                Subscription = ownerPhone is null ? null : await BuildLoginSubscription(ownerPhone, isOwner, baseUrl),
+                Employees = isOwner
+                    ? (await storeRepository.GetStoreUsers(store.Id, new[] { StoreRoleId.Employee }))
+                        .Select(u => new TandoLoginEmployee { UserId = u.Id, PhoneNumber = u.UserBlob?.Name }).ToArray()
+                    : null
+            });
+        }
+        return Ok(new TandoLoginResponse { UserId = user.Id, PhoneNumber = normalizedPhone, Stores = result.ToArray() });
+    }
+
+    private async Task<TandoLoginSubscription> BuildLoginSubscription(string ownerPhone, bool includeRenewalUrl, RequestBaseUrl baseUrl)
+    {
+        var status = await subscriptionService.GetStatus(ownerPhone);
+        var link = includeRenewalUrl && status.Phase is not null
+            ? await subscriptionService.CreatePaymentLink(ownerPhone, baseUrl) : null;
+        return new TandoLoginSubscription
+        {
+            Active = status.Active,
+            Phase = status.Phase,
+            PlanId = status.PlanId,
+            NextPaymentDue = status.NextPaymentDue,
+            Suspended = status.Suspended,
+            RenewalUrl = link?.Url,
+            RenewalUrlExpiresAt = link?.ExpiresAt
+        };
     }
 
     [HttpPost("users/api-keys")]
