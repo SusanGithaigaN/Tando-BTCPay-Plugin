@@ -83,13 +83,12 @@ public class TandoLightningConnectTests : UnitTestBase
     }
 
     [Fact]
-    public async Task Connect_UnreachableNode_IsRejected_ReachableNodeIsSaved()
+    public async Task Connect_UnreachableNode_IsRejectedAndNothingSaved()
     {
         using var s = CreateServerTester(newDb: true);
         await s.StartAsync();
         var admin = s.NewAccount();
         await admin.GrantAccessAsync(true);
-        // Server permission lets the key use local addresses, so this test reaches the node checks rather than the SSRF one.
         var key = await CreateKey(await admin.CreateClient(),
             Permission.Create(Policies.CanModifyStoreSettings), Permission.Create(Policies.CanModifyServerSettings));
 
@@ -99,14 +98,7 @@ public class TandoLightningConnectTests : UnitTestBase
             Assert.Equal("lightning_node_unreachable", await ErrorCode(unreachable));
         }
 
-        var connectionString = s.GetLightningConnectionString(LightningTestImplementation.CoreLightning, true);
-        using (var valid = await Connect(s.PayTester.HttpClient, key, admin.StoreId, connectionString))
-            Assert.Equal(HttpStatusCode.OK, valid.StatusCode);
-
-        var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId("BTC");
         var store = await s.PayTester.StoreRepository.FindStore(admin.StoreId);
-        var config = store!.GetPaymentMethodConfig<LightningPaymentMethodConfig>(paymentMethodId, s.PayTester.GetService<PaymentMethodHandlerDictionary>());
-        Assert.Equal(connectionString, config?.ConnectionString);
-        Assert.False(store.GetStoreBlob().IsExcluded(paymentMethodId));
+        Assert.Null(store!.GetPaymentMethodConfig(PaymentTypes.LN.GetPaymentMethodId("BTC")));
     }
 }

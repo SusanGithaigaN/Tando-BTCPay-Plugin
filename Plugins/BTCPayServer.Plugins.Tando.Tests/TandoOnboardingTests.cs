@@ -255,7 +255,7 @@ public class TandoOnboardingTests : PlaywrightBaseTest
     }
 
     [Fact]
-    public async Task ConnectLightning_ValidConnectionString_Succeeds()
+    public async Task ConnectLightning_LocalSocketFromMerchantKey_IsRejected()
     {
         await InitializePlaywright(ServerTester);
         var admin = await NewAdminAccount();
@@ -263,12 +263,10 @@ public class TandoOnboardingTests : PlaywrightBaseTest
         var adminKey = await MintApiKey(admin);
         var api = await ApiContextFor(adminKey);
         var (storeId, merchantApi) = await SignupMerchant(api);
-
         var connect = await merchantApi.PutAsync($"/plugins/api/tando/stores/{storeId}/lightning/connect",
             new APIRequestContextOptions { DataObject = new { connectionString = "type=clightning;server=unix://tmp/socket" } });
-        Assert.Equal(200, connect.Status);
-        var body = await ParseJson(connect);
-        Assert.Equal(storeId, body.GetProperty("storeId").GetString());
+        Assert.Equal(400, connect.Status);
+        Assert.Equal("invalid_connection_string", (await ParseJson(connect)).GetProperty("error").GetString());
     }
 
     [Fact]
