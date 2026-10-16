@@ -156,6 +156,21 @@ public class TandoSplitTests : PlaywrightBaseTest
         return invoice.Id;
     }
 
+    private async Task<string> CreateOverpaidInvoice(string storeId, decimal amount, decimal overpayFactor)
+    {
+        var client = MerchantClient(storeId);
+        await EnsureStoreWallet(client, storeId);
+        var invoice = await client.CreateInvoice(storeId, new CreateInvoiceRequest { Amount = amount, Currency = "KES" });
+        var method = (await client.GetInvoicePaymentMethods(invoice.Id)).First(m => m.PaymentMethodId == "BTC-CHAIN");
+        await ServerTester.ExplorerNode.SendToAddressAsync(
+            BitcoinAddress.Create(method.Destination, ServerTester.NetworkProvider.BTC.NBitcoinNetwork),
+            Money.Coins(method.Due * overpayFactor));
+        await ServerTester.ExplorerNode.GenerateAsync(1);
+        await TestUtils.EventuallyAsync(async () =>
+            Assert.Equal(InvoiceStatus.Settled, (await client.GetInvoice(invoice.Id)).Status));
+        return invoice.Id;
+    }
+
     private static async Task EnableSplit(IAPIRequestContext api, string storeId, decimal mpesaPercentage)
     {
         var mpesa = await api.PutAsync($"/plugins/api/tando/stores/{storeId}/mpesa",
@@ -176,6 +191,26 @@ public class TandoSplitTests : PlaywrightBaseTest
             await Task.Delay(200);
         }
         throw new Xunit.Sdk.XunitException($"No split was recorded for invoice {invoiceId} after it settled.");
+    }
+
+    [Fact]
+    public async Task OverpaidInvoice_SplitsOnTheAmountReceived()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(api);
+        await EnableSplit(merchantApi, storeId, 40m);
+
+        var invoiceId = await CreateOverpaidInvoice(storeId, 1000m, 1.5m);
+        var record = await WaitForSplit(merchantApi, storeId, invoiceId);
+
+        var paid = record.GetProperty("paidAmount").GetDecimal();
+        var mpesa = record.GetProperty("mpesaPortionAmount").GetDecimal();
+        Assert.True(paid > 1000m, $"Expected the overpayment to be counted, paid was {paid}");
+        Assert.Equal(Math.Round(paid * 0.40m, 2), mpesa);
+        Assert.Equal(paid - mpesa, record.GetProperty("btcPortionAmount").GetDecimal());
     }
 
     [Fact]

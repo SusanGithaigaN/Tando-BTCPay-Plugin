@@ -20,9 +20,10 @@ public class TandoInvoiceSettlementHostedService(EventAggregator eventAggregator
     {
         if (evt is not InvoiceEvent
             {
-                EventCode: InvoiceEventCode.Completed or InvoiceEventCode.MarkedCompleted or InvoiceEventCode.PaidInFull,
-                Invoice: { Status: InvoiceStatus.Settled } invoice
-            })
+                EventCode: InvoiceEventCode.Completed or InvoiceEventCode.MarkedCompleted or InvoiceEventCode.PaidInFull
+                    or InvoiceEventCode.PaidAfterExpiration or InvoiceEventCode.PaymentSettled,
+                Invoice: { } invoice
+            } || !TandoSplitService.IsSplittable(invoice))
             return;
 
         await using var scope = scopeFactory.CreateAsyncScope();
