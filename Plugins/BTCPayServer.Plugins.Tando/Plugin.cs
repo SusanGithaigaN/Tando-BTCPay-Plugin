@@ -14,10 +14,8 @@ namespace BTCPayServer.Plugins.Tando;
 public class Plugin : BaseBTCPayServerPlugin
 {
     public override IBTCPayServerPlugin.PluginDependency[] Dependencies { get; } =
-{
-        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.4.1" },
-        // NWC Lightning (pooled relays, NIP-44, payment notifications) comes from Kukks' Nostr plugin.
-        new IBTCPayServerPlugin.PluginDependency { Identifier = "BTCPayServer.Plugins.NIP05", Condition = ">=1.1.21" }
+    {
+        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.4.4" }
     };
 
     public override void Execute(IServiceCollection services)
