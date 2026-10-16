@@ -6,6 +6,7 @@ using BTCPayServer.Models.ServerViewModels;
 using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.Services.Lightning;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace BTCPayServer.Plugins.Tando;
@@ -33,6 +34,7 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<ITandoLightningProvisioner, NwcLightningProvisioner>();
         services.AddSingleton<ITandoLightningProvisioner, PhoenixdLightningProvisioner>();
         services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
+        services.Configure<MvcOptions>(options => options.Filters.Add<TandoSubscriptionGateFilter>());
         //services.AddSingleton<ITandoMpesaPayoutClient, HttpTandoMpesaPayoutClient>();
         services.AddSingleton<ILightningConnectionStringHandler, NwcLightningConnectionStringHandler>();
         services.AddHostedService<TandoInvoiceSettlementHostedService>();
