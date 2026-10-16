@@ -2,11 +2,14 @@
 using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
+using BTCPayServer.Data;
+using BTCPayServer.Plugins.Tando.Helper;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Stores;
 using BTCPayServer.Tests;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Playwright;
 
 namespace BTCPayServer.Plugins.Tando.Tests;
@@ -342,5 +345,97 @@ public class TandoOnboardingTests : PlaywrightBaseTest
         var issue = await api.PostAsync("/plugins/api/tando/users/api-keys",
             new APIRequestContextOptions { DataObject = new { phoneNumber = RandomKenyanPhone() } });
         Assert.Equal(404, issue.Status);
+    }
+
+    [Fact]
+    public async Task Login_Owner_ReturnsTrialSubscriptionAndRenewalUrl()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var phone = RandomKenyanPhone();
+        var (storeId, _) = await SignupMerchant(api, phone);
+
+        var login = await api.PostAsync("/plugins/api/tando/login",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, login.Status);
+        var store = (await ParseJson(login)).GetProperty("stores")[0];
+        Assert.Equal(storeId, store.GetProperty("storeId").GetString());
+        var subscription = store.GetProperty("subscription");
+        Assert.True(subscription.GetProperty("active").GetBoolean());
+        Assert.Equal("Trial", subscription.GetProperty("phase").GetString());
+        Assert.Contains("/subscriber-portal/", subscription.GetProperty("renewalUrl").GetString());
+    }
+
+    [Fact]
+    public async Task Login_AfterSubscriptionExpires_ReportsInactiveWithRenewalUrl()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var phone = RandomKenyanPhone();
+        await SignupMerchant(api, phone);
+
+        await ExpireSubscriber(phone);
+
+        var login = await api.PostAsync("/plugins/api/tando/login",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, login.Status);
+        var subscription = (await ParseJson(login)).GetProperty("stores")[0].GetProperty("subscription");
+        Assert.False(subscription.GetProperty("active").GetBoolean());
+        Assert.Contains("/subscriber-portal/", subscription.GetProperty("renewalUrl").GetString());
+
+        // Signing up again must not start a second trial or fail.
+        var signup = await api.PostAsync("/plugins/api/tando/signup",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, signup.Status);
+    }
+
+    [Fact]
+    public async Task Login_Employee_SeesSubscriptionButNoRenewalUrlOrEmployees()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(api);
+        var employeePhone = RandomKenyanPhone();
+        Assert.Equal(200, (await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = employeePhone } })).Status);
+
+        var login = await api.PostAsync("/plugins/api/tando/login",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = employeePhone } });
+        Assert.Equal(200, login.Status);
+        var store = (await ParseJson(login)).GetProperty("stores")[0];
+        Assert.True(store.GetProperty("subscription").GetProperty("active").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, store.GetProperty("subscription").GetProperty("renewalUrl").ValueKind);
+        Assert.Equal(JsonValueKind.Null, store.GetProperty("employees").ValueKind);
+    }
+
+    [Fact]
+    public async Task Login_UnknownPhone_ReturnsNotFound()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+
+        var login = await api.PostAsync("/plugins/api/tando/login",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = RandomKenyanPhone() } });
+        Assert.Equal(404, login.Status);
+        Assert.Equal("merchant_not_found", (await ParseJson(login)).GetProperty("error").GetString());
+    }
+
+    private async Task ExpireSubscriber(string phone)
+    {
+        var normalized = KenyanPhoneNumber.Normalize(phone)!;
+        var offeringId = (await ServerTester.PayTester.GetService<TandoSubscriptionService>().GetSettings()).SubscriptionOfferingId!;
+        await using var ctx = ServerTester.PayTester.GetService<ApplicationDbContextFactory>().CreateContext();
+        var subscriber = await ctx.Subscribers.GetBySelector(offeringId, CustomerSelector.ByExternalRef(normalized));
+        await ctx.Subscribers.Where(s => s.Id == subscriber!.Id).ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.IsActive, false)
+            .SetProperty(x => x.TrialEnd, DateTimeOffset.UtcNow.AddMinutes(-1)));
     }
 }
