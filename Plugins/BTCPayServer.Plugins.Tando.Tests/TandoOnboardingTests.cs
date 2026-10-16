@@ -3,6 +3,7 @@ using BTCPayServer.Client;
 using BTCPayServer.Client.Models;
 using BTCPayServer.Controllers;
 using BTCPayServer.Data;
+using BTCPayServer.Data.Subscriptions;
 using BTCPayServer.Plugins.Tando.Helper;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
@@ -428,6 +429,34 @@ public class TandoOnboardingTests : PlaywrightBaseTest
         Assert.Equal("merchant_not_found", (await ParseJson(login)).GetProperty("error").GetString());
     }
 
+    [Fact]
+    public async Task CreateInvoice_AfterSubscriptionLapses_IsBlockedButReadsStillWork()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var phone = RandomKenyanPhone();
+        var (storeId, merchantApi) = await SignupMerchant(api, phone);
+
+        // While the trial runs the gate lets the request through. It may still fail later for other reasons
+        // (this store has no wallet), but never with 402.
+        var before = await merchantApi.PostAsync($"/api/v1/stores/{storeId}/invoices",
+            new APIRequestContextOptions { DataObject = new { amount = "100", currency = "KES" } });
+        Assert.NotEqual(402, before.Status);
+
+        await ExpireSubscriber(phone);
+
+        var after = await merchantApi.PostAsync($"/api/v1/stores/{storeId}/invoices",
+            new APIRequestContextOptions { DataObject = new { amount = "100", currency = "KES" } });
+        Assert.Equal(402, after.Status);
+        Assert.Equal("subscription_inactive", (await ParseJson(after)).GetProperty("error").GetString());
+
+        // Sales lock, not a hard lock: the store's data and staff are still reachable.
+        Assert.Equal(200, (await merchantApi.GetAsync($"/api/v1/stores/{storeId}/invoices")).Status);
+        Assert.Equal(200, (await merchantApi.GetAsync($"/plugins/api/tando/stores/{storeId}/employees")).Status);
+    }
+
     private async Task ExpireSubscriber(string phone)
     {
         var normalized = KenyanPhoneNumber.Normalize(phone)!;
@@ -436,6 +465,7 @@ public class TandoOnboardingTests : PlaywrightBaseTest
         var subscriber = await ctx.Subscribers.GetBySelector(offeringId, CustomerSelector.ByExternalRef(normalized));
         await ctx.Subscribers.Where(s => s.Id == subscriber!.Id).ExecuteUpdateAsync(s => s
             .SetProperty(x => x.IsActive, false)
+            .SetProperty(x => x.Phase, SubscriberData.PhaseTypes.Expired)
             .SetProperty(x => x.TrialEnd, DateTimeOffset.UtcNow.AddMinutes(-1)));
     }
 }

@@ -11,6 +11,11 @@ info:
     M-Pesa side of a split. It is never a member of merchant stores. Each owner
     and employee gets their own key (returned by signup or `/users/api-keys`),
     which the mobile app uses for everything under `/stores/{storeId}`.
+
+    Subscription lapse:** when a merchant's subscription is expired or suspended, creating invoices on their
+    store (Greenfield `POST /api/v1/stores/{storeId}/invoices` and the POS app) returns 402. 
+    All other endpoints keep working. `POST /login` returns the subscription phase and a `renewalUrl`.
+
   version: "0.1.0"
 servers:
   - url: https://{host}/plugins/api/tando
