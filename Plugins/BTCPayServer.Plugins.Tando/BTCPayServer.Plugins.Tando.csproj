@@ -30,10 +30,10 @@
   already referenced by BTCPay Server Core project -->
 
   <ItemGroup Condition="$(Configuration) != 'Release'">
-    <PackageReference Include="Microsoft.CodeAnalysis" Version="5.6.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.6.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
-	<PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis" Version="5.9.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Common" Version="5.9.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
+	<PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="5.9.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.4">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

@@ -54,7 +54,7 @@ public class TandoLightningController(StoreRepository storeRepository, TandoLigh
         var paymentMethodId = PaymentTypes.LN.GetPaymentMethodId("BTC");
         var handler = (LightningLikePaymentHandler)handlers[paymentMethodId];
         var validation = new PaymentMethodConfigValidationContext(authorizationService, ModelState,
-            new JObject { ["connectionString"] = connectionString }, User, ownedStore.GetPaymentMethodConfig(paymentMethodId));
+            new JObject { ["connectionString"] = connectionString }, User, ownedStore.GetPaymentMethodConfig(paymentMethodId), ownedStore);
         try
         {
             await handler.ValidatePaymentMethodConfig(validation);

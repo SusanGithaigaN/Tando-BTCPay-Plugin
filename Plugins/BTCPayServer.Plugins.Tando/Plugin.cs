@@ -1,9 +1,7 @@
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
-using BTCPayServer.Lightning;
 using BTCPayServer.Models.ServerViewModels;
-using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.Services.Lightning;
 using Microsoft.AspNetCore.Mvc;

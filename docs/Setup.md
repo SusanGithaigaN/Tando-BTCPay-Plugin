@@ -12,6 +12,8 @@ All paths below are relative to the repository root unless a `cd` says otherwise
 
 ## 1. Start the regtest dependencies
 
+git submodule update --init --recursive
+
 BTCPay's test harness provides a docker compose stack with everything the `Bitcoin` launch profile expects: PostgreSQL (port 39372), NBXplorer (port 32838), a regtest bitcoind, and Lightning nodes (c-lightning and LND) for both a "merchant" and a "customer".
 
 ```bash

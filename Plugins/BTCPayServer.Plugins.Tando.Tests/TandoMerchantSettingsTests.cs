@@ -79,7 +79,7 @@ public class TandoMerchantSettingsTests : PlaywrightBaseTest
         var listResult = await manageController.APIKeys();
         var view = Assert.IsType<ViewResult>(listResult);
         var vm = Assert.IsType<UIManageController.ApiKeysViewModel>(view.Model);
-        return vm.ApiKeyDatas.Single(k => k.Label == label).Id;
+        return vm.ApiKeyDatas.Single(k => k.Label == label).Key;
     }
 
     private async Task<IAPIRequestContext> ApiContextFor(string apiKey)

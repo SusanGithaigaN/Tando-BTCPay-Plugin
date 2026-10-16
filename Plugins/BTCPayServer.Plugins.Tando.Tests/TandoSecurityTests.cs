@@ -93,7 +93,7 @@ public class TandoSecurityTests : PlaywrightBaseTest
         var created = vm.ApiKeyDatas.Single(k => k.Label == label);
         var savedPermissions = created.GetBlob().Permissions;
         Console.WriteLine($"[MintApiKey] storeId={storeId ?? "(admin)"} savedPermissions=[{string.Join(", ", savedPermissions)}]");
-        return created.Id;
+        return created.Key;
     }
 
     private async Task<IAPIRequestContext> ApiContextFor(string apiKey)
