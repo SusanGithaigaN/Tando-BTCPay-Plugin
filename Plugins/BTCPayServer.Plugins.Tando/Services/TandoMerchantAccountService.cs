@@ -57,22 +57,18 @@ public class TandoMerchantAccountService(UserManager<ApplicationUser> userManage
 
     public async Task<string> CreateAppKey(string userId, string? deviceName)
     {
-        var key = new APIKeyData
-        {
-            Id = Encoders.Hex.EncodeData(RandomUtils.GetBytes(20)),
-            Type = APIKeyType.Permanent,
-            UserId = userId,
-            Label = $"{AppKeyLabelPrefix}:{(string.IsNullOrWhiteSpace(deviceName) ? "device" : deviceName.Trim())}"
-        };
+        var key = APIKeyRepository.New();
+        key.UserId = userId;
+        key.Label = $"{AppKeyLabelPrefix}:{(string.IsNullOrWhiteSpace(deviceName) ? "device" : deviceName.Trim())}";
         key.SetBlob(new APIKeyBlob { Permissions = AppKeyPermissions });
         await apiKeyRepository.CreateKey(key);
-        return key.Id;
+        return key.Key;
     }
 
     public async Task RevokeAppKeys(string userId)
     {
         var keys = await apiKeyRepository.GetKeys(new APIKeyRepository.APIKeyQuery { UserId = new[] { userId } });
         foreach (var key in keys.Where(k => k.Label?.StartsWith(AppKeyLabelPrefix, StringComparison.Ordinal) is true))
-            await apiKeyRepository.Remove(key.Id, userId);
+            await apiKeyRepository.Remove(new APIKeyRepository.Selector.ById(key.Id), userId);
     }
 }
