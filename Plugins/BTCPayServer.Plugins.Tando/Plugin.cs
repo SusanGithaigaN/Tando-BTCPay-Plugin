@@ -33,6 +33,7 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<ITandoLightningProvisioner, NwcLightningProvisioner>();
         services.AddSingleton<ITandoLightningProvisioner, PhoenixdLightningProvisioner>();
         services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
+        //services.AddSingleton<ITandoMpesaPayoutClient, HttpTandoMpesaPayoutClient>();
         services.AddSingleton<ILightningConnectionStringHandler, NwcLightningConnectionStringHandler>();
         services.AddHostedService<TandoInvoiceSettlementHostedService>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()

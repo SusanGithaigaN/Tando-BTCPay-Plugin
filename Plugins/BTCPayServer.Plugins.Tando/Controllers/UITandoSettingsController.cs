@@ -77,13 +77,24 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             ModelState.AddModelError(nameof(model.MaxPayoutAmount), StringLocalizer["The payout limit must be greater than zero, or left empty for no limit"]);
             return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
         }
+
+        var payoutApiUrl = string.IsNullOrWhiteSpace(model.MpesaPayoutApiUrl) ? null : model.MpesaPayoutApiUrl.Trim();
+        if (payoutApiUrl is not null && (!Uri.TryCreate(payoutApiUrl, UriKind.Absolute, out var payoutUri) || payoutUri.Scheme is not ("https" or "http")))
+        {
+            ModelState.AddModelError(nameof(model.MpesaPayoutApiUrl), StringLocalizer["Enter the full payout endpoint URL, starting with https://"]);
+            return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
+        }
+        var saved = await subscriptionService.GetSettings();
         await subscriptionService.SaveSettings(new TandoSettings
         {
             SubscriptionOfferingId = model.SubscriptionOfferingId,
             SubscriptionPlanId = model.SubscriptionPlanId,
             FallbackSubscriptionPlanId = string.IsNullOrEmpty(model.FallbackSubscriptionPlanId) ? null : model.FallbackSubscriptionPlanId,
             TreasuryLightningAddress = treasuryAddress,
-            MaxPayoutAmount = model.MaxPayoutAmount
+            MaxPayoutAmount = model.MaxPayoutAmount,
+            MpesaPayoutApiUrl = payoutApiUrl,
+            MpesaPayoutApiKey = string.IsNullOrWhiteSpace(model.MpesaPayoutApiKey) ? saved.MpesaPayoutApiKey : model.MpesaPayoutApiKey.Trim(),
+            MpesaCallbackSecret = string.IsNullOrWhiteSpace(model.MpesaCallbackSecret) ? saved.MpesaCallbackSecret : model.MpesaCallbackSecret.Trim()
         });
         TempData[WellKnownTempData.SuccessMessage] = StringLocalizer["Tando settings updated"].Value;
         return RedirectToAction(nameof(Settings));
@@ -115,6 +126,9 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             FallbackSubscriptionPlanId = selectedFallbackPlanId ?? settings.FallbackSubscriptionPlanId,
             TreasuryLightningAddress = selectedTreasuryLightningAddress ?? settings.TreasuryLightningAddress,
             MaxPayoutAmount = selectedMaxPayoutAmount ?? settings.MaxPayoutAmount,
+            MpesaPayoutApiUrl = settings.MpesaPayoutApiUrl,
+            HasMpesaPayoutApiKey = !string.IsNullOrWhiteSpace(settings.MpesaPayoutApiKey),
+            HasMpesaCallbackSecret = !string.IsNullOrWhiteSpace(settings.MpesaCallbackSecret),
             Offerings = offerings.Select(o => new SelectListItem($"{o.Name} ({o.StoreName})", o.Id)).ToList(),
             Plans = planItems,
             CreateOfferingUrl = createOfferingUrl
