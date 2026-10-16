@@ -56,6 +56,14 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
 
     private static readonly SemaphoreSlim SplitLock = new(1, 1);
 
+    public static bool IsSplittable(InvoiceEntity invoice) => invoice switch
+    {
+        { Status: InvoiceStatus.Settled } => true,
+        { Status: InvoiceStatus.Expired, ExceptionStatus: InvoiceExceptionStatus.PaidLate }
+            => invoice.GetPayments(true).All(p => p.Status == PaymentStatus.Settled),
+        _ => false
+    };
+
     public async Task<(TandoSplitRecord? Record, string? Error)> ComputeAndRecordSplit(string storeId, string invoiceId)
     {
         await SplitLock.WaitAsync();
@@ -79,7 +87,7 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         if (existing is not null)
             return (existing, null);
 
-        if (invoice.Status != InvoiceStatus.Settled)
+        if (!IsSplittable(invoice))
             return (null, "invoice_not_settled");
 
         var splitConfig = await merchantSettingsService.GetSplitConfig(storeId);
@@ -88,15 +96,14 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         var mpesaSettings = await merchantSettingsService.GetMpesaSettings(storeId);
 
         var paidAmount = Math.Max(0m, invoice.PaidAmount?.Net ?? 0m);
-        var splitBase = Math.Min(paidAmount, invoice.Price);
-        var mpesaPortion = Math.Round(splitBase * (splitConfig.MpesaPercentage / 100m), 2);
+        var mpesaPortion = Math.Round(paidAmount * (splitConfig.MpesaPercentage / 100m), 2);
         var record = new TandoSplitRecord
         {
             TotalAmount = invoice.Price,
             PaidAmount = paidAmount,
             Currency = invoice.Currency,
             MpesaPortionAmount = mpesaPortion,
-            BtcPortionAmount = invoice.Price - mpesaPortion,
+            BtcPortionAmount = paidAmount - mpesaPortion,
             MpesaPercentage = splitConfig.MpesaPercentage,
             MpesaDestinationType = mpesaSettings?.DestinationType,
             MpesaDestination = mpesaSettings?.Destination,
