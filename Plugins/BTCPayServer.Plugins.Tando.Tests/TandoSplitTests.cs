@@ -8,6 +8,7 @@ using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Tests;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using NBitcoin;
 
@@ -420,6 +421,11 @@ public class TandoSplitTests : PlaywrightBaseTest
 
         var invoiceId = await CreatePaidInvoice(storeId, 1000m);
         var record = await WaitForSplit(merchantApi, storeId, invoiceId);
+        for (var attempt = 0; attempt < 50 && record.GetProperty("pullPaymentStatus").GetString() == "Created"; attempt++)
+        {
+            await Task.Delay(200);
+            record = await GetSplit(merchantApi, storeId, invoiceId);
+        }
 
         // A claim alone pays nothing: M-Pesa must not have fired and nothing is settled.
         Assert.Equal("Claimed", record.GetProperty("pullPaymentStatus").GetString());
@@ -431,19 +437,23 @@ public class TandoSplitTests : PlaywrightBaseTest
     private async Task<JsonElement> GetSplit(IAPIRequestContext api, string storeId, string invoiceId)
         => await ParseJson(await api.GetAsync($"/plugins/api/tando/stores/{storeId}/invoices/{invoiceId}/split"));
 
-    [Fact]
-    public async Task TreasuryPayoutCompleted_TriggersMpesa()
+    private async Task ReportTreasuryPayout(string storeId, string pullPaymentId, PayoutState state)
     {
-        var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
-
-        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
+        await using var scope = ServerTester.PayTester.GetService<IServiceScopeFactory>().CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
         {
             Id = "test-payout",
             StoreDataId = storeId,
             PullPaymentDataId = pullPaymentId,
-            State = PayoutState.Completed
+            State = state
         });
+    }
 
+    [Fact]
+    public async Task TreasuryPayoutCompleted_TriggersMpesa()
+    {
+        var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
+        await ReportTreasuryPayout(storeId, pullPaymentId, PayoutState.Completed);
         var record = await GetSplit(merchantApi, storeId, invoiceId);
         Assert.Equal("Completed", record.GetProperty("pullPaymentStatus").GetString());
         // No PSP is configured in tests, so the trigger is attempted and reports that; the point is it was attempted.
@@ -455,15 +465,7 @@ public class TandoSplitTests : PlaywrightBaseTest
     public async Task TreasuryPayoutCancelled_IsRecordedAndNothingSettled()
     {
         var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
-
-        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
-        {
-            Id = "test-payout",
-            StoreDataId = storeId,
-            PullPaymentDataId = pullPaymentId,
-            State = PayoutState.Cancelled
-        });
-
+        await ReportTreasuryPayout(storeId, pullPaymentId, PayoutState.Cancelled);
         var record = await GetSplit(merchantApi, storeId, invoiceId);
         Assert.Equal("Failed", record.GetProperty("pullPaymentStatus").GetString());
         Assert.Equal("lightning_payout_cancelled", record.GetProperty("pullPaymentError").GetString());
