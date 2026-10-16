@@ -436,7 +436,7 @@ public class TandoSplitTests : PlaywrightBaseTest
     {
         var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
 
-        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new PayoutData
+        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
         {
             Id = "test-payout",
             StoreDataId = storeId,
@@ -456,7 +456,7 @@ public class TandoSplitTests : PlaywrightBaseTest
     {
         var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
 
-        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new PayoutData
+        await ServerTester.PayTester.GetService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
         {
             Id = "test-payout",
             StoreDataId = storeId,
