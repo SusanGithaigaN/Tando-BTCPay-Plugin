@@ -193,7 +193,7 @@ public class TandoSecurityTests : PlaywrightBaseTest
     }
 
     [Fact]
-    public async Task MerchantKey_CannotReportItsOwnMpesaPayout()
+    public async Task MerchantKey_CannotSettleOrReportItsOwnMpesaPayout()
     {
         await InitializePlaywright(ServerTester);
         var admin = await NewAdminAccount();
@@ -205,5 +205,7 @@ public class TandoSecurityTests : PlaywrightBaseTest
         var update = await merchantApi.PutAsync($"/plugins/api/tando/stores/{storeId}/invoices/any/split/mpesa-payout-status",
             new APIRequestContextOptions { DataObject = new { status = "Confirmed", payoutReference = "FAKE" } });
         Assert.Equal(403, update.Status);
+        var settle = await merchantApi.PutAsync($"/plugins/api/tando/stores/{storeId}/invoices/any/split/settle");
+        Assert.Equal(403, settle.Status);
     }
 }
