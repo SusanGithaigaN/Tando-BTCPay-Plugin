@@ -2,13 +2,16 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
+using LNURL;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -18,7 +21,8 @@ namespace BTCPayServer.Plugins.Tando;
 
 [Authorize(Policy = Policies.CanModifyServerSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Route("server/tando")]
-public class UITandoSettingsController(TandoSubscriptionService subscriptionService, IStringLocalizer stringLocalizer) : Controller
+public class UITandoSettingsController(TandoSubscriptionService subscriptionService, IStringLocalizer stringLocalizer,
+    IHttpClientFactory httpClientFactory) : Controller
 {
     private IStringLocalizer StringLocalizer { get; } = stringLocalizer;
     private const string SpecResourceName = "BTCPayServer.Plugins.Tando.Resources.tando-openapi.yaml";
@@ -67,10 +71,14 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             }
         }
         var treasuryAddress = string.IsNullOrWhiteSpace(model.TreasuryLightningAddress) ? null : model.TreasuryLightningAddress.Trim();
-        if (treasuryAddress is not null && !LightningAddressFormat.IsMatch(treasuryAddress))
+        if (treasuryAddress is not null && treasuryAddress != (await subscriptionService.GetSettings()).TreasuryLightningAddress)
         {
-            ModelState.AddModelError(nameof(model.TreasuryLightningAddress), StringLocalizer["Enter a Lightning address in the form name@domain"]);
-            return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
+            var treasuryError = await CheckTreasuryAddress(treasuryAddress, HttpContext.RequestAborted);
+            if (treasuryError is not null)
+            {
+                ModelState.AddModelError(nameof(model.TreasuryLightningAddress), treasuryError);
+                return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
+            }
         }
         if (model.MaxPayoutAmount is <= 0)
         {
@@ -100,6 +108,36 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
         return RedirectToAction(nameof(Settings));
     }
     private static readonly Regex LightningAddressFormat = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled);
+
+    private async Task<string?> CheckTreasuryAddress(string address, CancellationToken cancellationToken)
+    {
+        Uri endpoint;
+        string? tag = null;
+        try
+        {
+            endpoint = LightningAddressFormat.IsMatch(address)
+                ? LNURL.LNURL.ExtractUriFromInternetIdentifier(address) : LNURL.LNURL.Parse(address, out tag);
+        }
+        catch (FormatException)
+        {
+            return StringLocalizer["Enter a Lightning address (name@domain) or an LNURL"];
+        }
+        if (tag is not null)
+            return tag.Equals("payRequest", StringComparison.OrdinalIgnoreCase) ? null : StringLocalizer["This LNURL can't receive payments"];
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            var info = await LNURL.LNURL.FetchInformation(endpoint, httpClientFactory.CreateClient(nameof(UITandoSettingsController)), timeout.Token);
+            return info is LNURLPayRequest
+                ? null : StringLocalizer["This address answered, but it can't receive Lightning payments"];
+        }
+        catch (Exception)
+        {
+            return StringLocalizer["Couldn't reach this Lightning address. Check the spelling and that the domain is online."];
+        }
+    }
 
     private async Task<TandoSettingsViewModel> BuildViewModel(string? selectedOfferingId, string? selectedPlanId, string? selectedFallbackPlanId,
         string? selectedTreasuryLightningAddress, decimal? selectedMaxPayoutAmount)
