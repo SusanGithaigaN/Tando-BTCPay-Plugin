@@ -8,6 +8,7 @@ using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Tests;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 using NBitcoin;
 
@@ -407,6 +408,69 @@ public class TandoSplitTests : PlaywrightBaseTest
         Assert.Equal(400, compute.Status);
         Assert.Equal("treasury_not_configured", (await ParseJson(compute)).GetProperty("error").GetString());
         Assert.Empty(await MerchantClient(storeId).GetPullPayments(storeId));
+    }
+
+    private async Task<(string StoreId, IAPIRequestContext MerchantApi, string InvoiceId, string PullPaymentId)> ClaimedSplit()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var api = await ApiContextFor(await MintApiKey(admin));
+        var (storeId, merchantApi) = await SignupMerchant(api);
+        await EnableSplit(merchantApi, storeId, 40m);
+
+        var invoiceId = await CreatePaidInvoice(storeId, 1000m);
+        var record = await WaitForSplit(merchantApi, storeId, invoiceId);
+        for (var attempt = 0; attempt < 50 && record.GetProperty("pullPaymentStatus").GetString() == "Created"; attempt++)
+        {
+            await Task.Delay(200);
+            record = await GetSplit(merchantApi, storeId, invoiceId);
+        }
+
+        // A claim alone pays nothing: M-Pesa must not have fired and nothing is settled.
+        Assert.Equal("Claimed", record.GetProperty("pullPaymentStatus").GetString());
+        Assert.Equal("NotTriggered", record.GetProperty("mpesaPayoutStatus").GetString());
+        Assert.False(record.GetProperty("mpesaSettled").GetBoolean());
+        return (storeId, merchantApi, invoiceId, record.GetProperty("pullPaymentId").GetString()!);
+    }
+
+    private async Task<JsonElement> GetSplit(IAPIRequestContext api, string storeId, string invoiceId)
+        => await ParseJson(await api.GetAsync($"/plugins/api/tando/stores/{storeId}/invoices/{invoiceId}/split"));
+
+    private async Task ReportTreasuryPayout(string storeId, string pullPaymentId, PayoutState state)
+    {
+        await using var scope = ServerTester.PayTester.GetService<IServiceScopeFactory>().CreateAsyncScope();
+        await scope.ServiceProvider.GetRequiredService<TandoSplitService>().OnTreasuryPayoutUpdated(new Data.PayoutData
+        {
+            Id = "test-payout",
+            StoreDataId = storeId,
+            PullPaymentDataId = pullPaymentId,
+            State = state
+        });
+    }
+
+    [Fact]
+    public async Task TreasuryPayoutCompleted_TriggersMpesa()
+    {
+        var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
+        await ReportTreasuryPayout(storeId, pullPaymentId, PayoutState.Completed);
+        var record = await GetSplit(merchantApi, storeId, invoiceId);
+        Assert.Equal("Completed", record.GetProperty("pullPaymentStatus").GetString());
+        // No PSP is configured in tests, so the trigger is attempted and reports that; the point is it was attempted.
+        Assert.NotEqual("NotTriggered", record.GetProperty("mpesaPayoutStatus").GetString());
+        Assert.False(record.GetProperty("mpesaSettled").GetBoolean());
+    }
+
+    [Fact]
+    public async Task TreasuryPayoutCancelled_IsRecordedAndNothingSettled()
+    {
+        var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
+        await ReportTreasuryPayout(storeId, pullPaymentId, PayoutState.Cancelled);
+        var record = await GetSplit(merchantApi, storeId, invoiceId);
+        Assert.Equal("Failed", record.GetProperty("pullPaymentStatus").GetString());
+        Assert.Equal("lightning_payout_cancelled", record.GetProperty("pullPaymentError").GetString());
+        Assert.Equal("NotTriggered", record.GetProperty("mpesaPayoutStatus").GetString());
+        Assert.False(record.GetProperty("mpesaSettled").GetBoolean());
     }
 
     private readonly HashSet<string> _storesWithWallet = new();

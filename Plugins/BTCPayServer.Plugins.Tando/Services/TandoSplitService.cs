@@ -7,20 +7,22 @@ using BTCPayServer.Client.Models;
 using BTCPayServer.Data;
 using BTCPayServer.Data.Payouts.LightningLike;
 using BTCPayServer.HostedServices;
+using BTCPayServer.PayoutProcessors;
+using BTCPayServer.PayoutProcessors.Lightning;
 using BTCPayServer.Payouts;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Stores;
+using Dapper;
+using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
-using Microsoft.EntityFrameworkCore;
-using Dapper;
 
 namespace BTCPayServer.Plugins.Tando.Services;
 
 [JsonConverter(typeof(StringEnumConverter))]
-public enum TandoPullPaymentStatus { NotApplicable, Created, Claimed, Failed }
+public enum TandoPullPaymentStatus { NotApplicable, Created, Claimed, Failed, Completed }
 
 [JsonConverter(typeof(StringEnumConverter))]
 public enum TandoMpesaPayoutStatus { NotTriggered, Triggered, Confirmed, Failed }
@@ -40,6 +42,7 @@ public record TandoSplitRecord
     public DateTimeOffset? MpesaSettledAt { get; set; }
     public DateTimeOffset RecordedAt { get; set; }
     public string? PullPaymentId { get; set; }
+    public string? PayoutId { get; set; }
     public TandoPullPaymentStatus PullPaymentStatus { get; set; } = TandoPullPaymentStatus.NotApplicable;
     public string? PullPaymentError { get; set; }
     public TandoMpesaPayoutStatus MpesaPayoutStatus { get; set; } = TandoMpesaPayoutStatus.NotTriggered;
@@ -50,7 +53,8 @@ public record TandoSplitRecord
 
 public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscriptionService subscriptionService,
     StoreRepository storeRepository, TandoMerchantSettingsService merchantSettingsService, ITandoMpesaPayoutClient tandoMpesaPayoutClient,
-    PullPaymentHostedService pullPaymentHostedService, ApplicationDbContextFactory dbContextFactory)
+    PullPaymentHostedService pullPaymentHostedService, ApplicationDbContextFactory dbContextFactory,
+    PayoutProcessorService payoutProcessorService, EventAggregator eventAggregator)
 {
     private const string SplitMetadataKey = "tandoSplit";
 
@@ -227,6 +231,7 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         }
         try
         {
+            await EnsureLightningPayoutProcessor(storeId);
             var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId("BTC");
             var pullPaymentId = await pullPaymentHostedService.CreatePullPayment(store, new CreatePullPaymentRequest
             {
@@ -247,9 +252,9 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             record.PullPaymentId = pullPaymentId;
             if (claimResult.Result == ClaimRequest.ClaimResult.Ok)
             {
+                // Claimed is not paid. M-Pesa waits for the payout's Completed event (OnTreasuryPayoutUpdated).
                 record.PullPaymentStatus = TandoPullPaymentStatus.Claimed;
-                record.MpesaSettled = true;
-                record.MpesaSettledAt = DateTimeOffset.UtcNow;
+                record.PayoutId = claimResult.PayoutData?.Id;
             }
             else
             {
@@ -262,12 +267,86 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
             record.PullPaymentError = ex.Message;
         }
-        if (record.PullPaymentStatus == TandoPullPaymentStatus.Claimed)
-        {
-            record = await TriggerMpesaPayout(invoiceId, storeId, record);
-        }
         await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
         return record;
+    }
+
+
+    public async Task OnTreasuryPayoutUpdated(Data.PayoutData payout)
+    {
+        if (payout.State is not (PayoutState.Completed or PayoutState.Cancelled) || payout.PullPaymentDataId is null)
+            return;
+
+        var invoiceId = await FindInvoiceByPullPayment(payout.StoreDataId, payout.PullPaymentDataId);
+        if (invoiceId is null)
+            return;
+
+        await SplitLock.WaitAsync();
+        try
+        {
+            var invoice = await invoiceRepository.GetInvoice(invoiceId);
+            var record = invoice is null ? null : GetRecord(invoice);
+            if (record is not { PullPaymentStatus: TandoPullPaymentStatus.Claimed })
+                return; // not ours, or already handled
+
+            record.PayoutId ??= payout.Id;
+            if (payout.State == PayoutState.Completed)
+            {
+                record.PullPaymentStatus = TandoPullPaymentStatus.Completed;
+                record = await TriggerMpesaPayout(invoiceId, payout.StoreDataId, record);
+            }
+            else
+            {
+                record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
+                record.PullPaymentError = "lightning_payout_cancelled";
+            }
+            await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
+        }
+        finally
+        {
+            SplitLock.Release();
+        }
+    }
+
+    private async Task<string?> FindInvoiceByPullPayment(string storeId, string pullPaymentId)
+    {
+        await using var ctx = dbContextFactory.CreateContext();
+        return await RelationalDatabaseFacadeExtensions.GetDbConnection(ctx.Database).ExecuteScalarAsync<string?>(
+            """
+            SELECT "Id" FROM "Invoices"
+            WHERE "StoreDataId" = @storeId
+              AND "Blob2"->'metadata'->'tandoSplit'->>'PullPaymentId' = @pullPaymentId
+            LIMIT 1
+            """,
+            new { storeId, pullPaymentId });
+    }
+
+    private async Task EnsureLightningPayoutProcessor(string storeId)
+    {
+        var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId("BTC");
+        var existing = await payoutProcessorService.GetProcessors(new PayoutProcessorService.PayoutProcessorQuery
+        {
+            Stores = new[] { storeId },
+            Processors = new[] { LightningAutomatedPayoutSenderFactory.ProcessorName },
+            PayoutMethods = new[] { payoutMethodId }
+        });
+        if (existing.Any())
+            return;
+
+        var processor = new Data.PayoutProcessorData
+        {
+            StoreId = storeId,
+            PayoutMethodId = payoutMethodId.ToString(),
+            Processor = LightningAutomatedPayoutSenderFactory.ProcessorName
+        };
+        processor.HasTypedBlob<LightningAutomatedPayoutBlob>().SetBlob(new LightningAutomatedPayoutBlob
+        {
+            ProcessNewPayoutsInstantly = true,
+            Interval = TimeSpan.FromMinutes(5)
+        });
+        var processed = new TaskCompletionSource();
+        eventAggregator.Publish(new PayoutProcessorUpdated { Data = processor, Id = processor.Id, Processed = processed });
+        await processed.Task;
     }
 
     private async Task<TandoSplitRecord> TriggerMpesaPayout(string invoiceId, string storeId, TandoSplitRecord record)

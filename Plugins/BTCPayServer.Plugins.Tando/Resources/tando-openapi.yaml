@@ -12,7 +12,7 @@ info:
     and employee gets their own key (returned by signup or `/users/api-keys`),
     which the mobile app uses for everything under `/stores/{storeId}`.
 
-    Subscription lapse:** when a merchant's subscription is expired or suspended, creating invoices on their
+    **Subscription lapse:** when a merchant's subscription is expired or suspended, creating invoices on their
     store (Greenfield `POST /api/v1/stores/{storeId}/invoices` and the POS app) returns 402. 
     All other endpoints keep working. `POST /login` returns the subscription phase and a `renewalUrl`.
 
@@ -37,6 +37,8 @@ tags:
     description: BTC/M-Pesa breakdown per sale, manual-confirmation model (Phase 4)
   - name: Employees
     description: Secondary/staff account management (Phase 5)
+  - name: Wallet
+    description: Merchant phone wallet (LDK node) - encrypted seed backup, node registration, payment proofs
 
 paths:
   /subscription/status:
@@ -93,10 +95,10 @@ paths:
         Returns a new API key for the merchant's app on every call.
 
         Idempotent by phone number: if the merchant already owns a store for this
-        MSISDN it is reused (AlreadyExisted=true) rather than duplicated. Auto-enrolls
-        a new subscriber into a free trial of the operator-designated plan if the
-        phone number has no active subscription yet. Also provisions the Keypad and
-        Cart POS apps on the store.
+        MSISDN it is reused (AlreadyExisted=true) rather than duplicated. A free trial
+        of the operator-designated plan is started only for a brand new merchant; an
+        existing subscriber, expired or not, keeps their record and `/login` reports
+        its status. Also provisions the Keypad and Cart POS apps on the store.
       security: [{ ApiKey: [CanModifyServerSettings] }]
       requestBody:
         required: true
@@ -118,6 +120,11 @@ paths:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          description: "`subscriber_creation_failed`: the trial subscriber could not be activated"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
         "503":
           description: Subscription plan not configured / not usable
           content:
@@ -156,6 +163,42 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /login:
+    post:
+      tags: [Onboarding]
+      summary: Look up a merchant, their stores, staff and subscription
+      description: >
+        Called by the Tando backend after it has verified the phone number, on every
+        app start after signup. Returns each store the user belongs to with their role,
+        the store owner's subscription (phase, next payment, suspended) and, for owners,
+        the employees and a `renewalUrl`: a BTCPay subscriber portal session where the
+        merchant pays to renew or change plan. The URL expires after an hour, so use the
+        one from the latest call. Issues no API key; use `/users/api-keys` for that.
+      security: [{ ApiKey: [CanModifyServerSettings] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TandoLoginRequest" }
+      responses:
+        "200":
+          description: Merchant found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoLoginResponse" }
+        "400":
+          description: "`invalid_phone_number`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`merchant_not_found`: no user for this phone, or the user belongs to no store"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
   /stores/{storeId}/lightning/connect:
     put:
       tags: [Onboarding]
@@ -163,8 +206,11 @@ paths:
       description: >
         Attaches Lightning to the store, either from an existing connection
         string or by provisioning one through a supported provider (phoenixd or
-        NWC). Called with the merchant's own key; a store the caller is not a
-        member of is rejected by BTCPay with 403.
+        NWC). Only the store's owner can call it. The string is validated the same
+        way as BTCPay's own payment method endpoint: local or internal addresses
+        and file-path credentials need server-level permission, and the node must
+        answer before anything is saved. NWC needs the Nostr plugin
+        (`BTCPayServer.Plugins.NIP05`) installed on the server.
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
@@ -184,12 +230,25 @@ paths:
                   storeId: { type: string }
                   paymentMethodId: { type: string, example: "BTC-LN" }
         "400":
-          description: "`connection_string_required`, `unsupported_provider_type`, or a provisioning error"
+          description: >
+            `connection_string_required`, `unsupported_provider_type`,
+            `nwc_connection_uri_required`, `nwc_requires_nostr_plugin`,
+            `invalid_connection_string` (unparsable, or a local/internal address
+            from a key without server rights), `lightning_node_unreachable`,
+            or a provisioning error
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
         "403":
-          $ref: "#/components/responses/Forbidden"
+          description: "`missing_permission`: the internal node needs `btcpay.server.canuseinternallightningnode`; or BTCPay's own 403"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: "`store_not_found`: the caller doesn't own this store"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
 
   /stores/{storeId}/products:
     get:
@@ -533,6 +592,168 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
 
+  /stores/{storeId}/wallet/backup:
+    get:
+      tags: [Wallet]
+      summary: Get the encrypted seed backup
+      description: Owner only. The plugin stores the ciphertext and can't decrypt it.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      responses:
+        "200":
+          description: Backup
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoWalletBackup" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`backup_not_found`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      tags: [Wallet]
+      summary: Save the encrypted seed backup
+      description: Replaces any previous backup and clears `verifiedAt`; Lightning stays off until it is verified again.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TandoSaveWalletBackupRequest" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoWalletBackup" }
+        "400":
+          description: "`backup_incomplete`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /stores/{storeId}/wallet/backup/verify:
+    post:
+      tags: [Wallet]
+      summary: Confirm the phone downloaded and decrypted the backup
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      responses:
+        "200": { description: Verified }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`backup_not_found`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /stores/{storeId}/wallet/node:
+    get:
+      tags: [Wallet]
+      summary: Get the device currently running the store's node
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      responses:
+        "200":
+          description: Registration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoNodeRegistration" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`node_not_registered`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+    put:
+      tags: [Wallet]
+      summary: Make this device the store's only live node
+      description: >
+        Called at first setup and after restoring on a new phone. Bumps the epoch;
+        reports carrying an older epoch are refused, which shuts out the old device.
+        Requires a verified backup.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TandoClaimNodeRequest" }
+      responses:
+        "200":
+          description: Claimed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoNodeRegistration" }
+        "400":
+          description: "`node_pubkey_and_device_required`, `invalid_node_pubkey`, `backup_not_verified`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`store_not_found`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /stores/{storeId}/invoices/{invoiceId}/lightning-payment:
+    post:
+      tags: [Wallet]
+      summary: Settle an invoice the phone node was paid for
+      description: >
+        The preimage proves the payment happened and the BOLT11 payee proves it went
+        to this store's registered node. Reporting the same payment again for the same
+        invoice returns the stored proof.
+      security: [{ ApiKey: [CanModifyStoreSettings] }]
+      parameters:
+        - $ref: "#/components/parameters/StoreId"
+        - $ref: "#/components/parameters/InvoiceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TandoRecordLightningPaymentRequest" }
+      responses:
+        "200":
+          description: Recorded and settled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TandoLightningPaymentProof" }
+        "400":
+          description: >
+            `bolt11_and_preimage_required`, `backup_not_verified`, `node_not_registered`,
+            `invalid_bolt11`, `wrong_payee`, `amount_required`, `invalid_preimage`,
+            `preimage_mismatch`, `invoice_cannot_be_settled`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: "`invoice_not_found`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: "`stale_node` (a replaced device), `invoice_already_paid`, `payment_already_used`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
 components:
   securitySchemes:
     ApiKey:
@@ -541,7 +762,7 @@ components:
       name: Authorization
       description: >
         BTCPay Greenfield API key, sent as `Authorization: token <api-key>`.
-        Subscription, signup, `/users/api-keys`, `split/settle` and
+        Subscription, signup, `/login`, `/users/api-keys`, `split/settle` and
         `split/mpesa-payout-status` need `btcpay.server.canmodifyserversettings`
         (the Tando backend's key). The other `/stores/{storeId}/...` endpoints
         need `btcpay.store.canmodifystoresettings` from a user who belongs to
@@ -763,3 +984,102 @@ components:
         userId: { type: string }
         phoneNumber: { type: string }
         alreadyExisted: { type: boolean }
+
+    TandoLoginRequest:
+      type: object
+      required: [phoneNumber]
+      properties:
+        phoneNumber: { type: string, example: "0712345678" }
+
+    TandoLoginResponse:
+      type: object
+      properties:
+        userId: { type: string }
+        phoneNumber: { type: string }
+        stores:
+          type: array
+          items: { $ref: "#/components/schemas/TandoLoginStore" }
+
+    TandoLoginStore:
+      type: object
+      properties:
+        storeId: { type: string }
+        storeName: { type: string }
+        role: { type: string, nullable: true, example: Owner }
+        subscription:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/TandoLoginSubscription" }]
+        employees:
+          type: array
+          nullable: true
+          description: Owners only
+          items: { $ref: "#/components/schemas/TandoLoginEmployee" }
+
+    TandoLoginSubscription:
+      type: object
+      properties:
+        active: { type: boolean }
+        phase: { type: string, nullable: true, enum: [Trial, Normal, Grace, Expired] }
+        planId: { type: string, nullable: true }
+        nextPaymentDue: { type: string, format: date-time, nullable: true }
+        suspended: { type: boolean }
+        renewalUrl: { type: string, nullable: true, description: "Owners only; expires after an hour" }
+        renewalUrlExpiresAt: { type: string, format: date-time, nullable: true }
+
+    TandoLoginEmployee:
+      type: object
+      properties:
+        userId: { type: string }
+        phoneNumber: { type: string, nullable: true }
+
+    TandoSaveWalletBackupRequest:
+      type: object
+      required: [ciphertext, nonce, credentialId, prfSalt]
+      properties:
+        ciphertext: { type: string, description: Base64 }
+        nonce: { type: string, description: Base64 }
+        credentialId: { type: string }
+        prfSalt: { type: string, description: Base64 }
+
+    TandoWalletBackup:
+      type: object
+      properties:
+        ciphertext: { type: string }
+        nonce: { type: string }
+        credentialId: { type: string }
+        prfSalt: { type: string }
+        createdAt: { type: integer, format: int64, description: Unix seconds }
+        verifiedAt: { type: integer, format: int64, nullable: true, description: "Unix seconds; null until verified" }
+
+    TandoClaimNodeRequest:
+      type: object
+      required: [nodePubkey, deviceId]
+      properties:
+        nodePubkey: { type: string, description: "33-byte compressed pubkey, hex" }
+        deviceId: { type: string }
+
+    TandoNodeRegistration:
+      type: object
+      properties:
+        nodePubkey: { type: string }
+        deviceId: { type: string }
+        epoch: { type: integer, format: int64 }
+        claimedAt: { type: integer, format: int64, description: Unix seconds }
+
+    TandoRecordLightningPaymentRequest:
+      type: object
+      required: [bolt11, preimage, epoch]
+      properties:
+        bolt11: { type: string }
+        preimage: { type: string, description: "32 bytes, hex" }
+        epoch: { type: integer, format: int64 }
+
+    TandoLightningPaymentProof:
+      type: object
+      properties:
+        bolt11: { type: string }
+        paymentHash: { type: string }
+        preimage: { type: string }
+        amountSats: { type: integer, format: int64 }
+        nodePubkey: { type: string }
+        recordedAt: { type: integer, format: int64, description: Unix seconds }
