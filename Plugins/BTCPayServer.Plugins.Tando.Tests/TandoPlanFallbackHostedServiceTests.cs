@@ -11,7 +11,7 @@ public class TandoPlanFallbackHostedServiceTests
     public async Task ThrowingCheck_WaitsForTheIntervalAndLogs()
     {
         var logger = new CollectingLogger();
-        var service = new ThrowingFallbackService();
+        var service = new ThrowingFallbackService(logger);
 
         await service.StartAsync(CancellationToken.None);
         await Task.Delay(TimeSpan.FromMilliseconds(1200));
@@ -22,7 +22,8 @@ public class TandoPlanFallbackHostedServiceTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error && e.Exception?.Message == "check failed");
     }
 
-    private class ThrowingFallbackService() : TandoPlanFallbackHostedService(null!)
+    private class ThrowingFallbackService(ILogger<TandoPlanFallbackHostedService> logger)
+        : TandoPlanFallbackHostedService(null!, logger)
     {
         private int _calls;
         public int Calls => Volatile.Read(ref _calls);
