@@ -14,8 +14,10 @@ namespace BTCPayServer.Plugins.Tando;
 public class Plugin : BaseBTCPayServerPlugin
 {
     public override IBTCPayServerPlugin.PluginDependency[] Dependencies { get; } =
-    {
-        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.3.7" }
+{
+        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.4.1" },
+        // NWC Lightning (pooled relays, NIP-44, payment notifications) comes from Kukks' Nostr plugin.
+        new IBTCPayServerPlugin.PluginDependency { Identifier = "BTCPayServer.Plugins.NIP05", Condition = ">=1.1.21" }
     };
 
     public override void Execute(IServiceCollection services)
@@ -32,10 +34,9 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<TandoLightningProvisionerFactory>();
         services.AddSingleton<ITandoLightningProvisioner, NwcLightningProvisioner>();
         services.AddSingleton<ITandoLightningProvisioner, PhoenixdLightningProvisioner>();
+        //services.AddSingleton<ITandoMpesaPayoutClient, HttpTandoMpesaPayoutClient>();
         services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
         services.Configure<MvcOptions>(options => options.Filters.Add<TandoSubscriptionGateFilter>());
-        //services.AddSingleton<ITandoMpesaPayoutClient, HttpTandoMpesaPayoutClient>();
-        services.AddSingleton<ILightningConnectionStringHandler, NwcLightningConnectionStringHandler>();
         services.AddHostedService<TandoInvoiceSettlementHostedService>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
         {
