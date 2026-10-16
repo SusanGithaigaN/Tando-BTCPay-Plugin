@@ -1,9 +1,7 @@
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
-using BTCPayServer.Lightning;
 using BTCPayServer.Models.ServerViewModels;
-using BTCPayServer.Plugins.Tando;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.Services.Lightning;
 using Microsoft.AspNetCore.Mvc;
@@ -15,7 +13,7 @@ public class Plugin : BaseBTCPayServerPlugin
 {
     public override IBTCPayServerPlugin.PluginDependency[] Dependencies { get; } =
     {
-        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.4.1" }
+        new IBTCPayServerPlugin.PluginDependency { Identifier = nameof(BTCPayServer), Condition = ">=2.4.3" }
     };
 
     public override void Execute(IServiceCollection services)
