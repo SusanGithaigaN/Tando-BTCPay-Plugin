@@ -273,4 +273,34 @@ public class TandoEmployeesTests : PlaywrightBaseTest
         var owners = await storeRepository.GetStoreUsers(storeId, new[] { StoreRoleId.Owner });
         Assert.Contains(owners, u => u.Id == coOwner.UserId);
     }
+
+    [Fact]
+    public async Task Invite_ExistingOwner_IsNotDemoted()
+    {
+        await InitializePlaywright(ServerTester);
+        var admin = await NewAdminAccount();
+        await EnsureTandoSubscriptionConfigured(admin);
+        var adminKey = await MintApiKey(admin);
+        var api = await ApiContextFor(adminKey);
+        var (storeId, merchantApi) = await SignupMerchant(api);
+
+        var phone = RandomKenyanPhone();
+        var invite = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        var userId = (await ParseJson(invite)).GetProperty("userId").GetString();
+
+        // Promote to co-owner. The merchant stays owner too, so BTCPay's last-owner rule can't block a demotion.
+        var storeRepository = ServerTester.PayTester.GetService<StoreRepository>();
+        await storeRepository.AddOrUpdateStoreUser(storeId, userId, StoreRoleId.Owner);
+
+        var reinvite = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
+            new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+
+        var owners = await storeRepository.GetStoreUsers(storeId, new[] { StoreRoleId.Owner });
+        Assert.Contains(owners, u => u.Id == userId);
+
+        Assert.Equal(409, reinvite.Status);
+        var body = await ParseJson(reinvite);
+        Assert.Equal("user_has_other_store_role", body.GetProperty("error").GetString());
+    }
 }

@@ -40,6 +40,10 @@ public class TandoEmployeesController(StoreRepository storeRepository, TandoMerc
         if (user is null)
             return BadRequest(new { error = "employee_creation_failed", detail = errors });
 
+        var existing = (await storeRepository.GetStoreUsers(storeId)).FirstOrDefault(u => u.Id == user.Id);
+        if (existing is not null && existing.StoreRole.Role != StoreRoleId.Employee.Role)
+            return Conflict(new { error = "user_has_other_store_role", detail = $"User already has the {existing.StoreRole.Role} role on this store." });
+
         var result = await storeRepository.AddOrUpdateStoreUser(storeId, user.Id, StoreRoleId.Employee);
         if (result is not AddOrUpdateStoreUserResult.Success)
         {
