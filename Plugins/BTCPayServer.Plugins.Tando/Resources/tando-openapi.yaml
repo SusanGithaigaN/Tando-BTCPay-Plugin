@@ -553,7 +553,7 @@ paths:
         Employee store role - POS/invoice access, no store settings or wallet
         access. The employee then gets their own key from `/users/api-keys`.
         If the phone belongs to someone who already holds another role on this
-        store (owner, manager or guest), their role is left unchanged.
+        store (any role other than Employee), their role is left unchanged.
       security: [{ ApiKey: [CanModifyStoreSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
@@ -571,7 +571,7 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
-          description: "`user_has_other_store_role`: the phone belongs to an owner, manager or guest of this store; their role is left unchanged"
+          description: "`user_has_other_store_role`: the phone belongs to an any role other than Employee of this store; their role is left unchanged"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }

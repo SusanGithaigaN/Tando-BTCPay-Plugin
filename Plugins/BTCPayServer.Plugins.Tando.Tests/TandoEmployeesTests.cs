@@ -287,6 +287,7 @@ public class TandoEmployeesTests : PlaywrightBaseTest
         var phone = RandomKenyanPhone();
         var invite = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
             new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
+        Assert.Equal(200, invite.Status);
         var userId = (await ParseJson(invite)).GetProperty("userId").GetString();
 
         // Promote to co-owner. The merchant stays owner too, so BTCPay's last-owner rule can't block a demotion.
@@ -296,11 +297,10 @@ public class TandoEmployeesTests : PlaywrightBaseTest
         var reinvite = await merchantApi.PostAsync($"/plugins/api/tando/stores/{storeId}/employees",
             new APIRequestContextOptions { DataObject = new { phoneNumber = phone } });
 
+        Assert.Equal(409, reinvite.Status);
+        Assert.Equal("user_has_other_store_role", (await ParseJson(reinvite)).GetProperty("error").GetString());
+
         var owners = await storeRepository.GetStoreUsers(storeId, new[] { StoreRoleId.Owner });
         Assert.Contains(owners, u => u.Id == userId);
-
-        Assert.Equal(409, reinvite.Status);
-        var body = await ParseJson(reinvite);
-        Assert.Equal("user_has_other_store_role", body.GetProperty("error").GetString());
     }
 }
