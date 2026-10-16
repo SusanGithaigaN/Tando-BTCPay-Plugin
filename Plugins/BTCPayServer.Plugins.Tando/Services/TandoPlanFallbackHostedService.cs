@@ -8,7 +8,7 @@ namespace BTCPayServer.Plugins.Tando.Services;
 
 public class TandoPlanFallbackHostedService(TandoSubscriptionService subscriptionService) : BackgroundService
 {
-    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15);
+    protected virtual TimeSpan CheckInterval => TimeSpan.FromMinutes(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -17,13 +17,22 @@ public class TandoPlanFallbackHostedService(TandoSubscriptionService subscriptio
             try
             {
                 await CheckAndSwapIfNeeded();
+            }
+            catch (Exception) when (!stoppingToken.IsCancellationRequested)
+            { }
+
+            try
+            {
                 await Task.Delay(CheckInterval, stoppingToken);
             }
-            catch { }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
     }
 
-    private async Task CheckAndSwapIfNeeded()
+    protected virtual async Task CheckAndSwapIfNeeded()
     {
         var settings = await subscriptionService.GetSettings();
         if (string.IsNullOrEmpty(settings.SubscriptionOfferingId) || string.IsNullOrEmpty(settings.SubscriptionPlanId))
