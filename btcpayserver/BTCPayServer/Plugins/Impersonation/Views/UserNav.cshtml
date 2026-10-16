@@ -1,4 +1,0 @@
-@using BTCPayServer.Plugins.Impersonation
-<li>
-    <a id="menu-item-@nameof(UIImpersonationController.LoginCodes)" class="dropdown-item@(ViewData["ActivePage"]?.ToString() == nameof(UIImpersonationController.LoginCodes) ? " active" : "")" asp-area="@ImpersonationPlugin.Area" asp-controller="UIImpersonation" asp-action="LoginCodes" text-translate="true">Login Codes</a>
-</li>
