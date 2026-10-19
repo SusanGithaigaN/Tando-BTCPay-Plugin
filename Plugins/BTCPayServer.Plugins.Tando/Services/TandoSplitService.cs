@@ -247,7 +247,7 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         return record;
     }
 
-    private async Task ClaimTandoInvoice(StoreData store, string invoiceId, TandoSplitRecord record, TandoPayment payment)
+    private async Task ClaimTandoInvoice(Data.StoreData store, string invoiceId, TandoSplitRecord record, TandoPayment payment)
     {
         record.TandoTransactionId = payment.Id;
         if (string.IsNullOrEmpty(payment.LightningInvoice))
@@ -269,7 +269,7 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             paymentRequest.MinimumAmount.ToDecimal(LightMoneyUnit.BTC));
     }
 
-    private async Task RetryTandoInvoice(StoreData store, string invoiceId, TandoSplitRecord record)
+    private async Task RetryTandoInvoice(Data.StoreData store, string invoiceId, TandoSplitRecord record)
     {
         try
         {
@@ -291,7 +291,7 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         }
     }
 
-    private async Task Claim(StoreData store, string invoiceId, TandoSplitRecord record, IClaimDestination destination, decimal amountBtc)
+    private async Task Claim(Data.StoreData store, string invoiceId, TandoSplitRecord record, IClaimDestination destination, decimal amountBtc)
     {
         await EnsureLightningPayoutProcessor(store.Id);
         var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId("BTC");
