@@ -5,6 +5,7 @@
 @{
     Layout = "_Layout";
     ViewData.SetLayoutModel(new LayoutModel(nameof(TandoBusinessPage.Settings), "Tando Business") { ActiveCategory = nameof(TandoBusinessPage) });
+    var secretPlaceholder = Model.HasTandoApiSecret ? "Saved. Leave empty to keep it" : null;
 }
 
 <div class="sticky-header">
@@ -48,18 +49,34 @@
                             <option value="" text-translate="true">None</option>
                         </select>
                         <span asp-validation-for="FallbackSubscriptionPlanId" class="text-danger"></span>
+                        <div class="form-text" text-translate="true">
+                            Only used if the plan above gets deleted or retired - new signups are automatically
+                            switched to this plan instead. Merchants already subscribed are never moved.
+                        </div>
                     </div>
                 }
                 else if (!string.IsNullOrEmpty(Model.SubscriptionOfferingId))
                 {
                     <div class="alert alert-warning" role="alert" text-translate="true">The selected offering has no active plans yet. Add a plan to continue.</div>
                 }
-                <h4 class="mt-5 mb-3" text-translate="true">Tando payouts - Split payments</h4>
+                <h4 class="mt-5 mb-3" text-translate="true">Tando payouts</h4>
+                @if (Model.IsTandoPayoutConfigured)
+                {
+                    <div class="alert alert-success" role="alert" text-translate="true">
+                        Payouts are on. When a sale settles, the store pays Tando for the merchant's KES share and Tando sends it to their M-Pesa.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-warning" role="alert" text-translate="true">
+                        Payouts are off. Merchants are paid only in sats until you add the Tando API details below.
+                    </div>
+                }
                 <div class="form-group mb-3">
                     <label asp-for="TandoApiBaseUrl" class="form-label" text-translate="true">Tando API address</label>
                     <input asp-for="TandoApiBaseUrl" class="form-control" placeholder="https://api.tando.to" />
                     <span asp-validation-for="TandoApiBaseUrl" class="text-danger"></span>
-                    <div class="form-text" text-translate="true">Clear the address and key ID to turn Tando payouts off</div>
+                    <div class="form-text" text-translate="true">Staging is https://api.tando.to. Production is https://api.tando.ltd and uses separate keys.</div>
                 </div>
                 <div class="form-group mb-3">
                     <label asp-for="TandoApiKeyId" class="form-label" text-translate="true">Key ID</label>
@@ -68,8 +85,7 @@
                 </div>
                 <div class="form-group mb-3">
                     <label asp-for="TandoApiSecret" class="form-label" text-translate="true">Secret</label>
-                    <input asp-for="TandoApiSecret" type="password" autocomplete="new-password" value="" class="form-control"
-                           placeholder="@(Model.HasTandoApiSecret ? "Saved. Leave empty to keep it" : "")" />
+                    <input asp-for="TandoApiSecret" type="password" autocomplete="new-password" class="form-control" placeholder="@secretPlaceholder" />
                     <span asp-validation-for="TandoApiSecret" class="text-danger"></span>
                     <div class="form-text" text-translate="true">Clear the address and key ID to turn Tando payouts off.</div>
                 </div>
@@ -79,16 +95,6 @@
                     <span asp-validation-for="MaxPayoutAmount" class="text-danger"></span>
                     <div class="form-text" text-translate="true">
                         A split whose M-Pesa portion is above this is recorded but not paid out, so the Tando team can review it. Leave empty for no limit.
-                    </div>
-                </div>
-
-                <h4 class="mt-5 mb-3" text-translate="true">Treasury (manual payouts)</h4>
-                <div class="form-group mb-3">
-                    <label asp-for="TreasuryLightningAddress" class="form-label" text-translate="true">Treasury Lightning address</label>
-                    <input asp-for="TreasuryLightningAddress" class="form-control" placeholder="payouts@yourdomain.com" />
-                    <span asp-validation-for="TreasuryLightningAddress" class="text-danger"></span>
-                    <div class="form-text" text-translate="true">
-                        Only used when Tando payouts are off. The KES share is sent here in sats and the team pays the merchant on M-Pesa by hand.
                     </div>
                 </div>
 

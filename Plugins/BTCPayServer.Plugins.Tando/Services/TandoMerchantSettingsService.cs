@@ -38,7 +38,6 @@ public class TandoMerchantSettingsService(StoreRepository storeRepository)
             case TandoMpesaDestinationType.PayBill:
                 if (!IsDigitsOnly(request.Destination, minLength: 5, maxLength: 10))
                     return new TandoMpesaValidationError(nameof(request.Destination), "Expected a numeric till/paybill number (5-10 digits).");
-
                 if (request.DestinationType == TandoMpesaDestinationType.PayBill)
                 {
                     if (string.IsNullOrWhiteSpace(request.AccountNumber))

@@ -13,17 +13,16 @@ public class TandoSettingsViewModel
     public string? SubscriptionOfferingId { get; set; }
     public string? SubscriptionPlanId { get; set; }
     public string? FallbackSubscriptionPlanId { get; set; }
-    public string? TreasuryLightningAddress { get; set; }
     public decimal? MaxPayoutAmount { get; set; }
     public string? TandoApiBaseUrl { get; set; }
     public string? TandoApiKeyId { get; set; }
     public string? TandoApiSecret { get; set; }
     public bool HasTandoApiSecret { get; set; }
     public bool IsTandoPayoutConfigured => !string.IsNullOrWhiteSpace(TandoApiBaseUrl) && !string.IsNullOrWhiteSpace(TandoApiKeyId) && HasTandoApiSecret;
+    public string? Command { get; set; }
     public List<SelectListItem> Offerings { get; set; } = new();
     public List<SelectListItem> Plans { get; set; } = new();
     public string? CreateOfferingUrl { get; set; }
-    public string? Command { get; set; }
 }
 
 public class TandoSettings
@@ -31,14 +30,11 @@ public class TandoSettings
     public string? SubscriptionOfferingId { get; set; }
     public string? SubscriptionPlanId { get; set; }
     public string? FallbackSubscriptionPlanId { get; set; }
-    public string? TreasuryLightningAddress { get; set; }
     public decimal? MaxPayoutAmount { get; set; }
-    public bool IsTreasuryConfigured => !string.IsNullOrWhiteSpace(TreasuryLightningAddress);
     public string? TandoApiBaseUrl { get; set; }
     public string? TandoApiKeyId { get; set; }
     public string? TandoApiSecret { get; set; }
     public bool IsTandoPayoutConfigured => !string.IsNullOrWhiteSpace(TandoApiBaseUrl) && !string.IsNullOrWhiteSpace(TandoApiKeyId) && !string.IsNullOrWhiteSpace(TandoApiSecret);
-    public bool IsSplitEnabled => IsTandoPayoutConfigured || IsTreasuryConfigured;
 }
 
 public class TandoConnectLightningRequest

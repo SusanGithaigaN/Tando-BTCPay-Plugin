@@ -48,6 +48,9 @@ public class TandoPaymentsClient(IHttpClientFactory httpClientFactory, TandoSubs
     public async Task<TandoApiResult<TandoPayment>> GetPayment(string id, CancellationToken cancellationToken = default)
         => ReadPayment(await Send(HttpMethod.Get, $"/v2/transactions/{Uri.EscapeDataString(id)}", null, cancellationToken));
 
+    public async Task<TandoApiResult<TandoPayment>> RecreateInvoice(string id, CancellationToken cancellationToken = default)
+        => ReadPayment(await Send(HttpMethod.Post, $"/v2/transactions/{Uri.EscapeDataString(id)}/recreate-invoice", null, cancellationToken));
+
     public async Task<TandoApiResult<string>> LookupMerchant(TandoMpesaDestinationType destinationType, string account,
         CancellationToken cancellationToken = default)
     {
@@ -71,6 +74,7 @@ public class TandoPaymentsClient(IHttpClientFactory httpClientFactory, TandoSubs
             DecodeSecret(settings.TandoApiSecret!), method.Method, url, bytes, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), Guid.NewGuid().ToString()));
         if (body is not null)
         {
+            // Send the exact bytes that were hashed, so the signature matches.
             message.Content = new ByteArrayContent(bytes);
             message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         }

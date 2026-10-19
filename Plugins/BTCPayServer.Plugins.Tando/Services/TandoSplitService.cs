@@ -39,6 +39,9 @@ public record TandoSplitRecord
     public decimal MpesaPercentage { get; set; }
     public TandoMpesaDestinationType? MpesaDestinationType { get; set; }
     public string? MpesaDestination { get; set; }
+    public string? MpesaAccountNumber { get; set; }
+    public string? TandoTransactionId { get; set; }
+    public int TandoInvoiceAttempts { get; set; }
     public bool MpesaSettled { get; set; }
     public DateTimeOffset? MpesaSettledAt { get; set; }
     public DateTimeOffset RecordedAt { get; set; }
@@ -47,16 +50,14 @@ public record TandoSplitRecord
     public TandoPullPaymentStatus PullPaymentStatus { get; set; } = TandoPullPaymentStatus.NotApplicable;
     public string? PullPaymentError { get; set; }
     public TandoMpesaPayoutStatus MpesaPayoutStatus { get; set; } = TandoMpesaPayoutStatus.NotTriggered;
-    public string? MpesaAccountNumber { get; set; }
-    public string? TandoTransactionId { get; set; }
     public string? MpesaPayoutReference { get; set; }
     public string? MpesaPayoutError { get; set; }
 }
 
 
 public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscriptionService subscriptionService,
-    StoreRepository storeRepository, TandoMerchantSettingsService merchantSettingsService, TandoPaymentsClient tandoPaymentsClient, 
-    BTCPayNetworkProvider networkProvider, PullPaymentHostedService pullPaymentHostedService, ApplicationDbContextFactory dbContextFactory,
+    StoreRepository storeRepository, TandoMerchantSettingsService merchantSettingsService, TandoPaymentsClient tandoPaymentsClient, BTCPayNetworkProvider networkProvider,
+    PullPaymentHostedService pullPaymentHostedService, ApplicationDbContextFactory dbContextFactory,
     PayoutProcessorService payoutProcessorService, EventAggregator eventAggregator)
 {
     private const string SplitMetadataKey = "tandoSplit";
@@ -98,8 +99,8 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             return (null, "invoice_not_settled");
 
         var splitConfig = await merchantSettingsService.GetSplitConfig(storeId);
-        if (splitConfig.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsSplitEnabled)
-            return (null, "split_not_enabled");
+        if (splitConfig.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsTandoPayoutConfigured)
+            return (null, "payouts_not_configured");
         var mpesaSettings = await merchantSettingsService.GetMpesaSettings(storeId);
 
         var paidAmount = Math.Max(0m, invoice.PaidAmount?.Net ?? 0m);
@@ -210,97 +211,124 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
         return (true, null);
     }
 
+
+    private const int MaxTandoInvoiceAttempts = 3;
+
     private async Task<TandoSplitRecord> CreateAndClaimPayout(string storeId, string invoiceId, TandoSplitRecord record)
     {
         var settings = await subscriptionService.GetSettings();
-        if (!settings.IsSplitEnabled)
+        if (!settings.IsTandoPayoutConfigured)
             return record;
-
-        if (settings.MaxPayoutAmount is { } maxPayout && record.MpesaPortionAmount > maxPayout)
-            return await FailPayout(invoiceId, record, "payout_limit_exceeded");
-
-        var store = await storeRepository.FindStore(storeId);
-        if (store is null)
-            return await FailPayout(invoiceId, record, "store_not_found");
 
         try
         {
-            IClaimDestination destination;
-            decimal amount;
-            string currency;
-            if (settings.IsTandoPayoutConfigured)
+            if (settings.MaxPayoutAmount is { } maxPayout && record.MpesaPortionAmount > maxPayout)
+                MarkFailed(record, "payout_limit_exceeded");
+            else if (await storeRepository.FindStore(storeId) is not { } store)
+                MarkFailed(record, "store_not_found");
+            else if (record.MpesaDestinationType is null || string.IsNullOrWhiteSpace(record.MpesaDestination))
+                MarkFailed(record, "no_mpesa_destination_configured");
+            else
             {
-                if (record.MpesaDestinationType is null || string.IsNullOrWhiteSpace(record.MpesaDestination))
-                    return await FailPayout(invoiceId, record, "no_mpesa_destination_configured");
-
+                // The invoice id doubles as Tando's idempotency key, so a retry never creates a second payment.
                 var created = await tandoPaymentsClient.CreatePayment(record.MpesaPortionAmount, record.MpesaDestinationType.Value,
                     record.MpesaDestination, record.MpesaAccountNumber, invoiceId);
-                if (created.Value is not { LightningInvoice: { Length: > 0 } bolt11 } payment)
-                    return await FailPayout(invoiceId, record, created.ErrorCode ?? "tando_no_invoice");
-
-                var paymentRequest = BOLT11PaymentRequest.Parse(bolt11, networkProvider.BTC.NBitcoinNetwork);
-                if (paymentRequest.MinimumAmount == LightMoney.Zero
-                    || (payment.SatsTotal > 0 && paymentRequest.MinimumAmount.ToDecimal(LightMoneyUnit.Satoshi) != payment.SatsTotal))
-                    return await FailPayout(invoiceId, record, "tando_invoice_amount_mismatch");
-
-                record.TandoTransactionId = payment.Id;
-                destination = new BoltInvoiceClaimDestination(bolt11, paymentRequest);
-                amount = paymentRequest.MinimumAmount.ToDecimal(LightMoneyUnit.BTC);
-                currency = "BTC";
-            }
-            else
-            {
-                destination = new LNURLPayClaimDestinaton(settings.TreasuryLightningAddress);
-                amount = record.MpesaPortionAmount;
-                currency = record.Currency;
-            }
-
-            await EnsureLightningPayoutProcessor(storeId);
-            var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId("BTC");
-            var pullPaymentId = await pullPaymentHostedService.CreatePullPayment(store, new CreatePullPaymentRequest
-            {
-                Name = $"Tando split payout - invoice {invoiceId}",
-                Amount = amount,
-                Currency = currency,
-                PayoutMethods = [payoutMethodId.ToString()],
-                AutoApproveClaims = true
-            });
-            var claimResult = await pullPaymentHostedService.Claim(new ClaimRequest
-            {
-                Destination = destination,
-                PullPaymentId = pullPaymentId,
-                ClaimedAmount = amount,
-                PayoutMethodId = payoutMethodId,
-                StoreId = storeId
-            });
-            record.PullPaymentId = pullPaymentId;
-            if (claimResult.Result == ClaimRequest.ClaimResult.Ok)
-            {
-                // Claimed is not paid. The M-Pesa side waits for the payout's Completed event (OnTreasuryPayoutUpdated).
-                record.PullPaymentStatus = TandoPullPaymentStatus.Claimed;
-                record.PayoutId = claimResult.PayoutData?.Id;
-            }
-            else
-            {
-                record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
-                record.PullPaymentError = ClaimRequest.GetErrorMessage(claimResult.Result);
+                if (created.Value is { } payment)
+                    await ClaimTandoInvoice(store, invoiceId, record, payment);
+                else
+                    MarkFailed(record, created.ErrorCode ?? "tando_no_invoice");
             }
         }
         catch (Exception ex)
         {
-            record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
-            record.PullPaymentError = ex.Message;
+            MarkFailed(record, ex.Message);
         }
         await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
         return record;
     }
 
-    private async Task<TandoSplitRecord> FailPayout(string invoiceId, TandoSplitRecord record, string error)
+    private async Task ClaimTandoInvoice(StoreData store, string invoiceId, TandoSplitRecord record, TandoPayment payment)
+    {
+        record.TandoTransactionId = payment.Id;
+        if (string.IsNullOrEmpty(payment.LightningInvoice))
+        {
+            MarkFailed(record, "tando_no_invoice");
+            return;
+        }
+
+        var paymentRequest = BOLT11PaymentRequest.Parse(payment.LightningInvoice, networkProvider.BTC.NBitcoinNetwork);
+        if (paymentRequest.MinimumAmount == LightMoney.Zero
+            || (payment.SatsTotal > 0 && paymentRequest.MinimumAmount.ToDecimal(LightMoneyUnit.Satoshi) != payment.SatsTotal))
+        {
+            MarkFailed(record, "tando_invoice_amount_mismatch");
+            return;
+        }
+
+        record.TandoInvoiceAttempts++;
+        await Claim(store, invoiceId, record, new BoltInvoiceClaimDestination(payment.LightningInvoice, paymentRequest),
+            paymentRequest.MinimumAmount.ToDecimal(LightMoneyUnit.BTC));
+    }
+
+    private async Task RetryTandoInvoice(StoreData store, string invoiceId, TandoSplitRecord record)
+    {
+        try
+        {
+            var recreated = await tandoPaymentsClient.RecreateInvoice(record.TandoTransactionId!);
+            if (recreated.Value is not { } payment)
+                MarkFailed(record, recreated.ErrorCode ?? "tando_recreate_failed");
+            else if (payment.Status != "pending")
+            {
+                // Tando already has the money, so don't pay again. The status poller settles the M-Pesa side.
+                record.PullPaymentStatus = TandoPullPaymentStatus.Completed;
+                record.MpesaPayoutStatus = TandoMpesaPayoutStatus.Triggered;
+            }
+            else
+                await ClaimTandoInvoice(store, invoiceId, record, payment);
+        }
+        catch (Exception ex)
+        {
+            MarkFailed(record, ex.Message);
+        }
+    }
+
+    private async Task Claim(StoreData store, string invoiceId, TandoSplitRecord record, IClaimDestination destination, decimal amountBtc)
+    {
+        await EnsureLightningPayoutProcessor(store.Id);
+        var payoutMethodId = PayoutTypes.LN.GetPayoutMethodId("BTC");
+        var pullPaymentId = await pullPaymentHostedService.CreatePullPayment(store, new CreatePullPaymentRequest
+        {
+            Name = $"Tando split payout - invoice {invoiceId}",
+            Amount = amountBtc,
+            Currency = "BTC",
+            PayoutMethods = [payoutMethodId.ToString()],
+            AutoApproveClaims = true
+        });
+        var claimResult = await pullPaymentHostedService.Claim(new ClaimRequest
+        {
+            Destination = destination,
+            PullPaymentId = pullPaymentId,
+            ClaimedAmount = amountBtc,
+            PayoutMethodId = payoutMethodId,
+            StoreId = store.Id
+        });
+        record.PullPaymentId = pullPaymentId;
+        if (claimResult.Result == ClaimRequest.ClaimResult.Ok)
+        {
+            // Claimed is not paid. The M-Pesa side waits for the payout's Completed event (OnTreasuryPayoutUpdated).
+            record.PullPaymentStatus = TandoPullPaymentStatus.Claimed;
+            record.PullPaymentError = null;
+            record.PayoutId = claimResult.PayoutData?.Id;
+        }
+        else
+        {
+            MarkFailed(record, ClaimRequest.GetErrorMessage(claimResult.Result));
+        }
+    }
+
+    private static void MarkFailed(TandoSplitRecord record, string error)
     {
         record.PullPaymentStatus = TandoPullPaymentStatus.Failed;
         record.PullPaymentError = error;
-        await invoiceRepository.UpdateInvoiceMetadata(invoiceId, SplitMetadataKey, record);
-        return record;
     }
 
     public async Task OnTreasuryPayoutUpdated(Data.PayoutData payout)
@@ -324,8 +352,15 @@ public class TandoSplitService(InvoiceRepository invoiceRepository, TandoSubscri
             if (payout.State == PayoutState.Completed)
             {
                 record.PullPaymentStatus = TandoPullPaymentStatus.Completed;
+                // Tando pays M-Pesa itself once its invoice is paid; TandoPayoutStatusHostedService picks up the result.
                 if (record.TandoTransactionId is not null)
                     record.MpesaPayoutStatus = TandoMpesaPayoutStatus.Triggered;
+            }
+            else if (record.TandoTransactionId is not null && record.TandoInvoiceAttempts < MaxTandoInvoiceAttempts
+                     && await storeRepository.FindStore(payout.StoreDataId) is { } store)
+            {
+                // Tando's invoice expired before the store paid it. Get a fresh one for the same payment and claim again.
+                await RetryTandoInvoice(store, invoiceId, record);
             }
             else
             {

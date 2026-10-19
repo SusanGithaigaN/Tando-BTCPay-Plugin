@@ -57,6 +57,10 @@ public class UITandoSettingsTests : PlaywrightBaseTest
             SubscriptionOfferingId = offering.Id,
             SubscriptionPlanId = plan.Id
         });
+
+        // Either redirects back with a success message, or re-renders the view with the
+        // saved state reflected - accept whichever this controller actually does rather
+        // than assume, and assert on the model where possible.
         Assert.True(result is RedirectToActionResult || result is ViewResult);
     }
 
@@ -73,6 +77,8 @@ public class UITandoSettingsTests : PlaywrightBaseTest
     [Fact]
     public async Task OpenApiSpec_IsReachableWithoutAuthentication()
     {
+        // [AllowAnonymous] on this one specifically - worth testing over real HTTP,
+        // not a direct controller call, since that's the part actually being verified.
         await InitializePlaywright(ServerTester);
         var api = await Playwright.APIRequest.NewContextAsync(new APIRequestNewContextOptions
         {

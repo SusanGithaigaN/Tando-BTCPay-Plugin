@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace BTCPayServer.Plugins.Tando.Services;
 
+/// <summary>Tando has no callbacks, so this polls each paid split until Tando reports the M-Pesa payout done or failed.</summary>
 public class TandoPayoutStatusHostedService(IServiceScopeFactory scopeFactory, TandoSubscriptionService subscriptionService,
     ILogger<TandoPayoutStatusHostedService> logger) : BackgroundService
 {

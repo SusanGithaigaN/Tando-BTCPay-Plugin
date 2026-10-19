@@ -52,7 +52,9 @@ public class TandoMerchantSettingsController(TandoMerchantSettingsService settin
                     field = nameof(request.Destination),
                     message = "M-Pesa doesn't recognise this account. Check the number."
                 });
+            // If Tando can't be reached, save anyway; the payout itself validates again.
         }
+
         var saved = await settingsService.SaveMpesaSettings(storeId, request);
         if (!saved)
             return NotFound(new { error = "store_not_found" });
@@ -69,11 +71,11 @@ public class TandoMerchantSettingsController(TandoMerchantSettingsService settin
         if (request is null || request.MpesaPercentage is < 0 or > 100)
             return BadRequest(new { error = "invalid_percentage", detail = "MpesaPercentage must be between 0 and 100." });
 
-        if (request.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsSplitEnabled)
+        if (request.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsTandoPayoutConfigured)
         {
             return BadRequest(new
             {
-                error = "treasury_not_configured",
+                error = "payouts_not_configured",
                 message = "Split payments aren't available yet. The Tando team needs to set up payouts first."
             });
         }
