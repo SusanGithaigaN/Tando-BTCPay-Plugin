@@ -65,16 +65,13 @@ public class UITandoSettingsTests : PlaywrightBaseTest
     }
 
     [Fact]
-    public async Task Docs_RedirectsToSwaggerEditorWithSpecUrl()
+    public async Task Docs_RendersLocalViewer()
     {
         var admin = await NewAdminAccount();
         var controller = ServerTester.PayTester.GetController<UITandoSettingsController>(
             admin.UserId, admin.StoreId, admin.IsAdmin);
 
-        var result = controller.Docs();
-
-        var redirect = Assert.IsType<RedirectResult>(result);
-        Assert.StartsWith("https://editor.swagger.io/?url=", redirect.Url);
+        Assert.IsType<ViewResult>(controller.Docs());
     }
 
     [Fact]

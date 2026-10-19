@@ -1,0 +1,11 @@
+@using BTCPayServer.Plugins.Tando.ViewModels
+@{
+    var active = ViewData["TandoTab"]?.ToString();
+}
+<nav id="SectionNav" class="mb-4">
+    <div class="nav">
+        <a class="nav-link @(active == nameof(TandoBusinessPage.Settings) ? "active" : "")" asp-controller="UITandoSettings" asp-action="Settings" text-translate="true">Settings</a>
+        <a class="nav-link @(active == nameof(TandoBusinessPage.Stores) ? "active" : "")" asp-controller="UITandoAdmin" asp-action="Stores" text-translate="true">Stores</a>
+        <a class="nav-link @(active == nameof(TandoBusinessPage.Payouts) ? "active" : "")" asp-controller="UITandoAdmin" asp-action="Payouts" text-translate="true">Payouts</a>
+    </div>
+</nav>

@@ -26,7 +26,7 @@ public class TandoWalletTests : PlaywrightBaseTest
 
     public ServerTester ServerTester { get; }
 
-    private async Task EnsureTandoSubscriptionConfigured(TestAccount admin, string treasuryLightningAddress = "treasury@tando.example")
+    private async Task EnsureTandoSubscriptionConfigured(TestAccount admin, bool tandoPayouts = true)
     {
         var client = await admin.CreateClient();
         var offering = await client.CreateOffering(admin.StoreId, new OfferingModel { AppName = "Tando Test Offering" });
@@ -36,7 +36,10 @@ public class TandoWalletTests : PlaywrightBaseTest
         {
             SubscriptionOfferingId = offering.Id,
             SubscriptionPlanId = plan.Id,
-            TreasuryLightningAddress = treasuryLightningAddress
+            // Payouts on, but pointed at a port nothing listens on, so tests never reach Tando.
+            TandoApiBaseUrl = tandoPayouts ? "http://127.0.0.1:1" : null,
+            TandoApiKeyId = tandoPayouts ? "test-key" : null,
+            TandoApiSecret = tandoPayouts ? "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8" : null
         });
     }
 

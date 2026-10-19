@@ -69,11 +69,11 @@ public class TandoParsingTests
     }
 
     [Theory]
-    [InlineData(TandoMpesaDestinationType.TillNumber, "12345")]       // 5 digits, the minimum
-    [InlineData(TandoMpesaDestinationType.TillNumber, "1234567890")]  // 10 digits, the maximum
-    [InlineData(TandoMpesaDestinationType.PayBill, "4141031")]
-    public void Mpesa_TillAndPaybill_Valid(TandoMpesaDestinationType type, string destination)
-        => Assert.Null(Validate(type, destination));
+    [InlineData(TandoMpesaDestinationType.TillNumber, "12345", null)]       // 5 digits, the minimum
+    [InlineData(TandoMpesaDestinationType.TillNumber, "1234567890", null)]  // 10 digits, the maximum
+    [InlineData(TandoMpesaDestinationType.PayBill, "4141031", "ACC-7731")]
+    public void Mpesa_TillAndPaybill_Valid(TandoMpesaDestinationType type, string destination, string? accountNumber)
+        => Assert.Null(Validate(type, destination, accountNumber));
 
     [Theory]
     [InlineData(TandoMpesaDestinationType.TillNumber, "1234")]         // too short
@@ -88,7 +88,7 @@ public class TandoParsingTests
     public void Mpesa_PaybillAccountNumber_LengthRule()
     {
         Assert.Null(Validate(TandoMpesaDestinationType.PayBill, "4141031", new string('A', 20)));
-        Assert.Null(Validate(TandoMpesaDestinationType.PayBill, "4141031"));
+        Assert.Equal("AccountNumber", Validate(TandoMpesaDestinationType.PayBill, "4141031")?.Field);
         Assert.Equal("AccountNumber", Validate(TandoMpesaDestinationType.PayBill, "4141031", new string('A', 21))?.Field);
     }
 
@@ -123,4 +123,22 @@ public class TandoParsingTests
         Assert.Null(result);
         Assert.Equal(expectedError, error);
     }
+
+    [Fact]
+    public void TandoHmac_MatchesSpec()
+    {
+        var secret = TandoPaymentsClient.DecodeSecret("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8");
+        Assert.Equal(32, secret.Length);
+        var body = System.Text.Encoding.UTF8.GetBytes("{\"account\":\"5123456\",\"transactionType\":\"BuyGoods\"}");
+        var header = TandoPaymentsClient.BuildAuthorizationHeader("tando-pos-test", secret, "post",
+            "https://api.tando.to/v2/merchant", body, 1760000000, "0f8fad5b-d9cb-469f-a165-70867728950e");
+        Assert.Equal("Tando-HMAC keyId=tando-pos-test, ts=1760000000, nonce=0f8fad5b-d9cb-469f-a165-70867728950e, sig=x84Q9xhWghQwLQCrbd+jFyQqcI3U/1NLv/miRHTcG+w=", header);
+    }
+
+    [Theory]
+    [InlineData(TandoMpesaDestinationType.MobileNumber, "SendMoney")]
+    [InlineData(TandoMpesaDestinationType.TillNumber, "BuyGoods")]
+    [InlineData(TandoMpesaDestinationType.PayBill, "PayBill")]
+    public void TandoTransactionType_Mapping(TandoMpesaDestinationType type, string expected)
+        => Assert.Equal(expected, TandoPaymentsClient.ToTransactionType(type));
 }
