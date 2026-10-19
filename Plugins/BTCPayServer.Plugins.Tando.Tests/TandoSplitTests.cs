@@ -450,14 +450,13 @@ public class TandoSplitTests : PlaywrightBaseTest
     }
 
     [Fact]
-    public async Task TreasuryPayoutCompleted_TriggersMpesa()
+    public async Task TreasuryPayoutCompleted_LeavesMpesaForTheTeam()
     {
         var (storeId, merchantApi, invoiceId, pullPaymentId) = await ClaimedSplit();
         await ReportTreasuryPayout(storeId, pullPaymentId, PayoutState.Completed);
         var record = await GetSplit(merchantApi, storeId, invoiceId);
         Assert.Equal("Completed", record.GetProperty("pullPaymentStatus").GetString());
-        // No PSP is configured in tests, so the trigger is attempted and reports that; the point is it was attempted.
-        Assert.NotEqual("NotTriggered", record.GetProperty("mpesaPayoutStatus").GetString());
+        Assert.Equal("NotTriggered", record.GetProperty("mpesaPayoutStatus").GetString());
         Assert.False(record.GetProperty("mpesaSettled").GetBoolean());
     }
 

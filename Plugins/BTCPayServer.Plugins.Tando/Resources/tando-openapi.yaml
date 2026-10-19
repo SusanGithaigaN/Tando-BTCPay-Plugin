@@ -336,9 +336,18 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/TandoMpesaSettingsRequest" }
       responses:
-        "200": { description: Saved }
+        "200":
+          description: Saved. `merchantName` is the registered M-Pesa name when Tando payouts are on, otherwise null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merchantName: { type: string, nullable: true, example: "MAMA MBOGA STORES" }
         "400":
-          description: Validation failed (bad phone/till/paybill format)
+          description: >
+            `validation_failed` (bad phone/till/paybill format, or a paybill without an account number) or
+            `mpesa_account_not_found` (Tando doesn't recognise the account)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -378,8 +387,8 @@ paths:
         "400":
           description: >
             `invalid_percentage`, `mpesa_destination_required`, or
-            `treasury_not_configured` (a percentage above 0 while the Tando team
-            hasn't set a treasury Lightning address)
+            `treasury_not_configured` (a percentage above 0 while neither Tando
+            payouts nor a treasury Lightning address are set up)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -434,8 +443,8 @@ paths:
         "400":
           description: >
             `invoice_not_settled` (only a settled invoice can be split) or
-            `treasury_not_configured` (the store has a percentage above 0 but no
-            treasury Lightning address is set)
+            `treasury_not_configured` (the store has a percentage above 0 but
+            neither Tando payouts nor a treasury Lightning address are set up)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorResponse" }
@@ -496,9 +505,10 @@ paths:
       tags: [Split Payments]
       summary: Report the status of the M-Pesa payout for a split
       description: >
-        Operator only. Called by the Tando backend (or its PSP callback) as the
-        M-Pesa payout progresses. `Confirmed` also marks the split's M-Pesa leg
-        settled. A merchant key gets 403.
+        Operator only. For splits paid out by hand (treasury mode), the Tando
+        backend reports the M-Pesa payout here. When Tando payouts are on, the
+        plugin polls Tando and updates the status itself. `Confirmed` also marks
+        the split's M-Pesa leg settled. A merchant key gets 403.
       security: [{ ApiKey: [CanModifyServerSettings] }]
       parameters:
         - $ref: "#/components/parameters/StoreId"
@@ -926,7 +936,7 @@ components:
         accountNumber:
           type: string
           nullable: true
-          description: Optional, PayBill only.
+          description: Required for PayBill, ignored otherwise.
 
     TandoMpesaSettingsResponse:
       type: object
@@ -957,11 +967,13 @@ components:
         mpesaPercentage: { type: number, format: decimal }
         mpesaDestinationType: { $ref: "#/components/schemas/TandoMpesaDestinationType" }
         mpesaDestination: { type: string, nullable: true }
+        mpesaAccountNumber: { type: string, nullable: true, description: PayBill account number }
+        tandoTransactionId: { type: string, nullable: true, description: "Tando's payment id when Tando payouts are on" }
         mpesaSettled: { type: boolean }
         mpesaSettledAt: { type: string, format: date-time, nullable: true }
         recordedAt: { type: string, format: date-time }
         pullPaymentId: { type: string, nullable: true }
-        pullPaymentStatus: { type: string, enum: [NotApplicable, Created, Claimed, Failed] }
+        pullPaymentStatus: { type: string, enum: [NotApplicable, Created, Claimed, Completed, Failed] }
         pullPaymentError: { type: string, nullable: true }
         mpesaPayoutStatus: { $ref: "#/components/schemas/TandoMpesaPayoutStatus" }
         mpesaPayoutReference: { type: string, nullable: true }

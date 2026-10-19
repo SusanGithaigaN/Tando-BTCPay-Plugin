@@ -38,10 +38,14 @@ public class TandoMerchantSettingsService(StoreRepository storeRepository)
             case TandoMpesaDestinationType.PayBill:
                 if (!IsDigitsOnly(request.Destination, minLength: 5, maxLength: 10))
                     return new TandoMpesaValidationError(nameof(request.Destination), "Expected a numeric till/paybill number (5-10 digits).");
-                if (request.DestinationType == TandoMpesaDestinationType.PayBill
-                    && !string.IsNullOrWhiteSpace(request.AccountNumber)
-                    && request.AccountNumber.Length > 20)
-                    return new TandoMpesaValidationError(nameof(request.AccountNumber), "Account number is too long.");
+
+                if (request.DestinationType == TandoMpesaDestinationType.PayBill)
+                {
+                    if (string.IsNullOrWhiteSpace(request.AccountNumber))
+                        return new TandoMpesaValidationError(nameof(request.AccountNumber), "Account number is required for a paybill.");
+                    if (request.AccountNumber.Length > 20)
+                        return new TandoMpesaValidationError(nameof(request.AccountNumber), "Account number is too long.");
+                }
                 break;
         }
         return null;

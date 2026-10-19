@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
+using BTCPayServer.Plugins.Tando.Helper;
 using BTCPayServer.Plugins.Tando.Services;
 using BTCPayServer.Plugins.Tando.ViewModels;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +13,8 @@ namespace BTCPayServer.Plugins.Tando;
 [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
 [IgnoreAntiforgeryToken]
 
-public class TandoMerchantSettingsController(TandoMerchantSettingsService settingsService, TandoSubscriptionService subscriptionService) : Controller
+public class TandoMerchantSettingsController(TandoMerchantSettingsService settingsService, TandoSubscriptionService subscriptionService,
+    TandoPaymentsClient paymentsClient) : Controller
 {
     [HttpGet("mpesa")]
     public async Task<IActionResult> GetMpesaSettings(string storeId)
@@ -34,11 +36,28 @@ public class TandoMerchantSettingsController(TandoMerchantSettingsService settin
         if (validationError is not null)
             return BadRequest(new { error = "validation_failed", field = validationError.Field, message = validationError.Message });
 
+        string? merchantName = null;
+        if ((await subscriptionService.GetSettings()).IsTandoPayoutConfigured)
+        {
+            var account = request.DestinationType == TandoMpesaDestinationType.MobileNumber
+                ? KenyanPhoneNumber.Normalize(request.Destination)!
+                : request.Destination!.Trim();
+            var lookup = await paymentsClient.LookupMerchant(request.DestinationType, account, HttpContext.RequestAborted);
+            if (lookup.Success)
+                merchantName = lookup.Value;
+            else if (lookup.StatusCode == 400)
+                return BadRequest(new
+                {
+                    error = "mpesa_account_not_found",
+                    field = nameof(request.Destination),
+                    message = "M-Pesa doesn't recognise this account. Check the number."
+                });
+        }
         var saved = await settingsService.SaveMpesaSettings(storeId, request);
         if (!saved)
             return NotFound(new { error = "store_not_found" });
 
-        return Ok();
+        return Ok(new { merchantName });
     }
 
     [HttpGet("split-config")]
@@ -50,12 +69,12 @@ public class TandoMerchantSettingsController(TandoMerchantSettingsService settin
         if (request is null || request.MpesaPercentage is < 0 or > 100)
             return BadRequest(new { error = "invalid_percentage", detail = "MpesaPercentage must be between 0 and 100." });
 
-        if (request.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsTreasuryConfigured)
+        if (request.MpesaPercentage > 0 && !(await subscriptionService.GetSettings()).IsSplitEnabled)
         {
             return BadRequest(new
             {
                 error = "treasury_not_configured",
-                message = "Split payments aren't available yet. The Tando team needs to set a treasury Lightning address first."
+                message = "Split payments aren't available yet. The Tando team needs to set up payouts first."
             });
         }
 

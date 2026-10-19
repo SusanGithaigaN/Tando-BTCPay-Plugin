@@ -39,6 +39,11 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
     public async Task<IActionResult> Settings(TandoSettingsViewModel model)
     {
         ViewData["ActivePage"] = "Tando";
+        if (model.Command == "refresh")
+        {
+            ModelState.Clear();
+            return View(await BuildViewModel(model.SubscriptionOfferingId, null, null, model.TreasuryLightningAddress, model.MaxPayoutAmount, model.TandoApiBaseUrl, model.TandoApiKeyId));
+        }
         if (string.IsNullOrEmpty(model.SubscriptionOfferingId))
         {
             ModelState.AddModelError(nameof(model.SubscriptionOfferingId), StringLocalizer["Select a subscription offering"]);
@@ -86,13 +91,22 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
         }
 
-        var payoutApiUrl = string.IsNullOrWhiteSpace(model.MpesaPayoutApiUrl) ? null : model.MpesaPayoutApiUrl.Trim();
-        if (payoutApiUrl is not null && (!Uri.TryCreate(payoutApiUrl, UriKind.Absolute, out var payoutUri) || payoutUri.Scheme is not ("https" or "http")))
-        {
-            ModelState.AddModelError(nameof(model.MpesaPayoutApiUrl), StringLocalizer["Enter the full payout endpoint URL, starting with https://"]);
-            return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId, model.TreasuryLightningAddress, model.MaxPayoutAmount));
-        }
         var saved = await subscriptionService.GetSettings();
+        var apiBaseUrl = string.IsNullOrWhiteSpace(model.TandoApiBaseUrl) ? null : model.TandoApiBaseUrl.Trim().TrimEnd('/');
+        var apiKeyId = string.IsNullOrWhiteSpace(model.TandoApiKeyId) ? null : model.TandoApiKeyId.Trim();
+        var apiSecret = string.IsNullOrWhiteSpace(model.TandoApiSecret) ? saved.TandoApiSecret : model.TandoApiSecret.Trim();
+        var tandoOff = apiBaseUrl is null && apiKeyId is null && string.IsNullOrWhiteSpace(model.TandoApiSecret);
+
+        if (!tandoOff)
+        {
+            if (apiBaseUrl is null || !Uri.TryCreate(apiBaseUrl, UriKind.Absolute, out var baseUri) || baseUri.Scheme != Uri.UriSchemeHttps)
+                return await Invalid(nameof(model.TandoApiBaseUrl), StringLocalizer["Enter the Tando API address, starting with https://"]);
+            if (apiKeyId is null)
+                return await Invalid(nameof(model.TandoApiKeyId), StringLocalizer["Enter the key ID Tando gave you"]);
+            if (!TandoPaymentsClient.IsValidSecret(apiSecret))
+                return await Invalid(nameof(model.TandoApiSecret), StringLocalizer["Enter the 43-character secret Tando gave you"]);
+        }
+
         await subscriptionService.SaveSettings(new TandoSettings
         {
             SubscriptionOfferingId = model.SubscriptionOfferingId,
@@ -100,12 +114,19 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             FallbackSubscriptionPlanId = string.IsNullOrEmpty(model.FallbackSubscriptionPlanId) ? null : model.FallbackSubscriptionPlanId,
             TreasuryLightningAddress = treasuryAddress,
             MaxPayoutAmount = model.MaxPayoutAmount,
-            MpesaPayoutApiUrl = payoutApiUrl,
-            MpesaPayoutApiKey = string.IsNullOrWhiteSpace(model.MpesaPayoutApiKey) ? saved.MpesaPayoutApiKey : model.MpesaPayoutApiKey.Trim(),
-            MpesaCallbackSecret = string.IsNullOrWhiteSpace(model.MpesaCallbackSecret) ? saved.MpesaCallbackSecret : model.MpesaCallbackSecret.Trim()
+            TandoApiBaseUrl = tandoOff ? null : apiBaseUrl,
+            TandoApiKeyId = tandoOff ? null : apiKeyId,
+            TandoApiSecret = tandoOff ? null : apiSecret
         });
         TempData[WellKnownTempData.SuccessMessage] = StringLocalizer["Tando settings updated"].Value;
         return RedirectToAction(nameof(Settings));
+
+        async Task<IActionResult> Invalid(string field, string message)
+        {
+            ModelState.AddModelError(field, message);
+            return View(await BuildViewModel(model.SubscriptionOfferingId, model.SubscriptionPlanId, model.FallbackSubscriptionPlanId,
+                model.TreasuryLightningAddress, model.MaxPayoutAmount, model.TandoApiBaseUrl, model.TandoApiKeyId));
+        }
     }
     private static readonly Regex LightningAddressFormat = new(@"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.Compiled);
 
@@ -140,7 +161,7 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
     }
 
     private async Task<TandoSettingsViewModel> BuildViewModel(string? selectedOfferingId, string? selectedPlanId, string? selectedFallbackPlanId,
-        string? selectedTreasuryLightningAddress, decimal? selectedMaxPayoutAmount)
+    string? selectedTreasuryLightningAddress, decimal? selectedMaxPayoutAmount, string? selectedApiBaseUrl = null, string? selectedApiKeyId = null)
     {
         var settings = await subscriptionService.GetSettings();
         var offerings = await subscriptionService.GetAllOfferings();
@@ -164,9 +185,9 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
             FallbackSubscriptionPlanId = selectedFallbackPlanId ?? settings.FallbackSubscriptionPlanId,
             TreasuryLightningAddress = selectedTreasuryLightningAddress ?? settings.TreasuryLightningAddress,
             MaxPayoutAmount = selectedMaxPayoutAmount ?? settings.MaxPayoutAmount,
-            MpesaPayoutApiUrl = settings.MpesaPayoutApiUrl,
-            HasMpesaPayoutApiKey = !string.IsNullOrWhiteSpace(settings.MpesaPayoutApiKey),
-            HasMpesaCallbackSecret = !string.IsNullOrWhiteSpace(settings.MpesaCallbackSecret),
+            TandoApiBaseUrl = selectedApiBaseUrl ?? settings.TandoApiBaseUrl,
+            TandoApiKeyId = selectedApiKeyId ?? settings.TandoApiKeyId,
+            HasTandoApiSecret = !string.IsNullOrWhiteSpace(settings.TandoApiSecret),
             Offerings = offerings.Select(o => new SelectListItem($"{o.Name} ({o.StoreName})", o.Id)).ToList(),
             Plans = planItems,
             CreateOfferingUrl = createOfferingUrl
@@ -189,7 +210,6 @@ public class UITandoSettingsController(TandoSubscriptionService subscriptionServ
     [HttpGet("docs")]
     public IActionResult Docs()
     {
-        var specUrl = Url.Action(nameof(OpenApiSpec), null, null, Request.Scheme);
-        return Redirect($"https://editor.swagger.io/?url={Uri.EscapeDataString(specUrl!)}");
+        return View();
     }
 }

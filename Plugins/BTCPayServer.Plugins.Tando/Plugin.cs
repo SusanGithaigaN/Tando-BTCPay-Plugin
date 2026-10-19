@@ -31,8 +31,9 @@ public class Plugin : BaseBTCPayServerPlugin
         services.AddSingleton<TandoLightningProvisionerFactory>();
         services.AddSingleton<ITandoLightningProvisioner, NwcLightningProvisioner>();
         services.AddSingleton<ITandoLightningProvisioner, PhoenixdLightningProvisioner>();
-        //services.AddSingleton<ITandoMpesaPayoutClient, HttpTandoMpesaPayoutClient>();
-        services.AddSingleton<ITandoMpesaPayoutClient, UnconfiguredTandoMpesaPayoutClient>();
+        services.AddHttpClient(TandoPaymentsClient.HttpClientName);
+        services.AddSingleton<TandoPaymentsClient>();
+        services.AddHostedService<TandoPayoutStatusHostedService>();
         services.Configure<MvcOptions>(options => options.Filters.Add<TandoSubscriptionGateFilter>());
         services.AddHostedService<TandoInvoiceSettlementHostedService>();
         services.AddSingleton(new ServicesViewModel.OtherExternalService()
