@@ -4,4 +4,4 @@ using System.Text;
 
 namespace BTCPayServer.Plugins.Tando.ViewModels;
 
-public enum TandoBusinessPage { Settings }
+public enum TandoBusinessPage { Settings, Stores, Payouts }

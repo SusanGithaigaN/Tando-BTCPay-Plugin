@@ -1,0 +1,75 @@
+@using BTCPayServer.Abstractions.Extensions
+@using BTCPayServer.Abstractions.Models
+@using BTCPayServer.Plugins.Tando.ViewModels
+@model TandoPayoutsViewModel
+@{
+    Layout = "_Layout";
+    ViewData.SetLayoutModel(new LayoutModel(nameof(TandoBusinessPage.Payouts), "Tando Business") { ActiveCategory = nameof(TandoBusinessPage) });
+    ViewData["TandoTab"] = nameof(TandoBusinessPage.Payouts);
+    int Count(string state) => Model.Counts.TryGetValue(state, out var c) ? c : 0;
+    string Badge(string state) => state switch { "paid" => "bg-success", "failed" => "bg-danger", _ => "bg-warning" };
+}
+
+<div class="sticky-header">
+    <h2>@ViewData["Title"]</h2>
+</div>
+<partial name="_StatusMessage" />
+<partial name="_TandoTabs" />
+
+<nav class="nav tando-tabs mb-3">
+    <a class="nav-link @(Model.State is null ? "active" : "")" asp-action="Payouts">All (@Model.Counts.Values.Sum())</a>
+    <a class="nav-link @(Model.State == "pending" ? "active" : "")" asp-action="Payouts" asp-route-state="pending">Pending (@Count("pending"))</a>
+    <a class="nav-link @(Model.State == "paid" ? "active" : "")" asp-action="Payouts" asp-route-state="paid">Paid (@Count("paid"))</a>
+    <a class="nav-link @(Model.State == "failed" ? "active" : "")" asp-action="Payouts" asp-route-state="failed">Failed (@Count("failed"))</a>
+</nav>
+
+@if (!Model.Payouts.Any())
+{
+    <p class="text-secondary" text-translate="true">No payouts here.</p>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th text-translate="true">Date</th>
+                    <th text-translate="true">Store</th>
+                    <th text-translate="true">Invoice</th>
+                    <th class="text-end" text-translate="true">KES</th>
+                    <th text-translate="true">Paid to</th>
+                    <th text-translate="true">Status</th>
+                    <th text-translate="true">Lightning</th>
+                    <th text-translate="true">M-Pesa</th>
+                    <th text-translate="true">Receipt / error</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var p in Model.Payouts)
+                {
+                    <tr>
+                        <td class="text-nowrap">@(DateTimeOffset.TryParse(p.RecordedAt, out var at) ? at.ToString("yyyy-MM-dd HH:mm") : p.RecordedAt)</td>
+                        <td>@p.StoreName</td>
+                        <td><a asp-controller="UIInvoice" asp-action="Invoice" asp-route-invoiceId="@p.InvoiceId">@p.InvoiceId</a></td>
+                        <td class="text-end">@p.AmountKes</td>
+                        <td>@p.DestinationType: @p.Destination</td>
+                        <td><span class="badge @Badge(p.State)">@p.State</span></td>
+                        <td>@p.LightningStatus</td>
+                        <td>@p.MpesaStatus</td>
+                        <td>@(p.Receipt ?? p.Error)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="d-flex gap-2">
+        @if (Model.Skip > 0)
+        {
+            <a class="btn btn-secondary" asp-action="Payouts" asp-route-state="@Model.State" asp-route-skip="@Math.Max(0, Model.Skip - Model.Take)" text-translate="true">Previous</a>
+        }
+        @if (Model.HasMore)
+        {
+            <a class="btn btn-secondary" asp-action="Payouts" asp-route-state="@Model.State" asp-route-skip="@(Model.Skip + Model.Take)" text-translate="true">Next</a>
+        }
+    </div>
+}
