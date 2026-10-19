@@ -69,11 +69,11 @@ public class TandoParsingTests
     }
 
     [Theory]
-    [InlineData(TandoMpesaDestinationType.TillNumber, "12345")]       // 5 digits, the minimum
-    [InlineData(TandoMpesaDestinationType.TillNumber, "1234567890")]  // 10 digits, the maximum
-    [InlineData(TandoMpesaDestinationType.PayBill, "4141031")]
-    public void Mpesa_TillAndPaybill_Valid(TandoMpesaDestinationType type, string destination)
-        => Assert.Null(Validate(type, destination));
+    [InlineData(TandoMpesaDestinationType.TillNumber, "12345", null)]       // 5 digits, the minimum
+    [InlineData(TandoMpesaDestinationType.TillNumber, "1234567890", null)]  // 10 digits, the maximum
+    [InlineData(TandoMpesaDestinationType.PayBill, "4141031", "ACC-7731")]
+    public void Mpesa_TillAndPaybill_Valid(TandoMpesaDestinationType type, string destination, string? accountNumber)
+        => Assert.Null(Validate(type, destination, accountNumber));
 
     [Theory]
     [InlineData(TandoMpesaDestinationType.TillNumber, "1234")]         // too short
