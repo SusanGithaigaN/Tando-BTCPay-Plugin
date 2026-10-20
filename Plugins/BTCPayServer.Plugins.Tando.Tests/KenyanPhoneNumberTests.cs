@@ -8,9 +8,11 @@ public class KenyanPhoneNumberTests
     [Theory]
     [InlineData("0712345678", "254712345678")]
     [InlineData("+254712345678", "254712345678")]
+    [InlineData("254712345678", "254712345678")]
     [InlineData("0112345678", "254112345678")]
     [InlineData("+254112345678", "254112345678")]
     [InlineData(" 0712345678 ", "254712345678")]
+    [InlineData("0712 345678", "254712345678")]
     public void Normalize_KenyanMobileFormats_ReturnsCanonicalNumber(string input, string expected)
         => Assert.Equal(expected, KenyanPhoneNumber.Normalize(input));
 
@@ -24,8 +26,6 @@ public class KenyanPhoneNumberTests
     [InlineData("0212345678")]
     [InlineData("071234567")]
     [InlineData("07123456789")]
-    [InlineData("0712 345678")]
-    [InlineData("254712345678")]
     public void Normalize_UnsupportedOrMalformedNumber_ReturnsNull(string? input)
         => Assert.Null(KenyanPhoneNumber.Normalize(input));
 }
